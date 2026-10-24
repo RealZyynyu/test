@@ -1,0 +1,40 @@
+name: Build NOVA Native ISO
+on:
+  push:
+    branches: [nova-os-native]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out NOVA source
+        uses: actions/checkout@v4
+      - name: Install boot-image dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm xorriso git curl gcc make nasm
+      - name: Prepare freestanding kernel template
+        run: |
+          git clone --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git _builder
+          cp kernel/main.c _builder/kernel/src/main.c
+          cp kernel/font.h _builder/kernel/src/font.h
+          cp limine.conf _builder/limine.conf
+      - name: Build independent x86-64 kernel and ISO
+        run: |
+          make -C _builder TOOLCHAIN=llvm all
+          test -s _builder/template.iso
+          mv _builder/template.iso nova-os-native-x86_64.iso
+          sha256sum nova-os-native-x86_64.iso > nova-os-native-x86_64.iso.sha256
+      - name: Publish ISO build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-os-native-iso
+          path: |
+            nova-os-native-x86_64.iso
+            nova-os-native-x86_64.iso.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
