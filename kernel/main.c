@@ -17,6 +17,11 @@ __attribute__((used, section(".limine_requests")))
 static volatile struct limine_framebuffer_request fb_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST_ID, .revision = 0
 };
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_memmap_request nova_memmap_request={
+    .id=LIMINE_MEMMAP_REQUEST_ID,.revision=0
+};
+
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t requests_end[] = LIMINE_REQUESTS_END_MARKER;
 
@@ -410,7 +415,7 @@ static void app_content(void){
         text(437,480,"LIGHT",1,0x3C588B);
         text(757,480,"DARK",1,0xEDF1FF);
         text(421,551,"Press T to toggle appearance.",1,secondary);
-    }else{
+    }else if(screen==5){
         text(398,191,"ABOUT THIS NOVA",2,fg);
         text(399,230,"An independent operating system project.",1,secondary);
         roundrect(396,260,673,327,17,pale);
@@ -462,6 +467,8 @@ static char letter(uint8_t sc){
     };
     return sc<128?keys[sc]:0;
 }
+static int cursor_drawn=0;
+static void cursor_paint(void);
 static void redraw(void){cursor_drawn=0;desktop();cursor_paint();}
 static void move(int dx,int dy){
     int x=player%8+dx,y=player/8+dy;
@@ -489,7 +496,7 @@ static void serial_log(const char *s){
 #define CURSOR_W 16
 #define CURSOR_H 23
 static uint32_t cursor_under[CURSOR_W*CURSOR_H];
-static int cursor_x=0,cursor_y=0,cursor_drawn=0;
+static int cursor_x=0,cursor_y=0;
 static void cursor_hide(void){
     if(!cursor_drawn)return;
     for(int yy=0;yy<CURSOR_H;yy++){
@@ -655,7 +662,7 @@ static void input_loop(void){
                     serial_log("NOVA_MOUSE_CLICK\n");
                 }
                 was_pressed=mouse.left;
-                cursor_paint();
+                if(!cursor_drawn)cursor_paint();
             }
         }else keyboard_scancode(value);
     }
@@ -667,6 +674,13 @@ void kmain(void){
     fb=fb_request.response->framebuffers[0];
     if(!fb||fb->bpp!=32||fb->memory_model!=LIMINE_FRAMEBUFFER_RGB||fb->width<800||fb->height<600)idle();
     serial_init();
+    if(nova_memmap_request.response){
+        for(uint64_t i=0;i<nova_memmap_request.response->entry_count;i++){
+            struct limine_memmap_entry *entry=nova_memmap_request.response->entries[i];
+            if(entry->type==LIMINE_MEMMAP_USABLE)
+                usable_memory_mb+=entry->length/1048576u;
+        }
+    }
     serial_log("NOVA_KERNEL_BOOT_OK\n");
     if(nova_mouse_init())serial_log("NOVA_PS2_MOUSE_ENABLED\n");
     else serial_log("NOVA_PS2_MOUSE_UNAVAILABLE\n");
