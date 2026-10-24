@@ -31,6 +31,8 @@ jobs:
           cp kernel/pmm.h _builder/kernel/src/pmm.h
           cp kernel/scheduler.h _builder/kernel/src/scheduler.h
           cp kernel/pci.h _builder/kernel/src/pci.h
+          cp kernel/interrupts.h _builder/kernel/src/interrupts.h
+          cp kernel/irq.S _builder/kernel/src/irq.S
           cp limine.conf _builder/limine.conf
       - name: Build independent x86-64 kernel and ISO
         run: |
@@ -82,13 +84,15 @@ jobs:
           grep -q NOVA_PMM_SELFTEST_OK nova-os-serial.log
           grep -q NOVA_SCHED_SELFTEST_OK nova-os-serial.log
           grep -q NOVA_PCI_INVENTORY_READY nova-os-serial.log
+          grep -q NOVA_IDT_PIT_READY nova-os-serial.log
+          grep -q NOVA_TIMER_1S_OK nova-os-serial.log
           cat nova-os-serial.log
       - name: Publish ISO as a private GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="nova-native-v0.6"
+          tag="nova-native-v0.7"
           files=(nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256)
           if [[ -s nova-os-native-preview.png ]]; then
             files+=(nova-os-native-preview.png)
@@ -101,7 +105,7 @@ jobs:
           else
             gh release create "$tag" "${files[@]}" \
               --target "$GITHUB_SHA" \
-              --title "NOVA OS Native 0.6 (Memory and Kernel Jobs)" \
-              --notes "Independent native kernel with page allocation, cooperative kernel jobs, PCI inventory, keyboard, PS/2 mouse, RAM files and terminal; checked by QEMU self-tests. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
+              --title "NOVA OS Native 0.7 (Interrupts and Timer)" \
+              --notes "Independent NOVA x86-64 kernel with protected interrupt descriptors, remapped PIC, 100Hz PIT, timer-driven cooperative jobs, memory, mouse, PCI and RAM files; checked by QEMU boot tests. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
               --prerelease
           fi
