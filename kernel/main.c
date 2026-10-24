@@ -100,47 +100,118 @@ static uint32_t mix(uint32_t a,uint32_t b,int t,int steps){
     int br=(int)((b>>16)&255),bg=(int)((b>>8)&255),bb=(int)(b&255);
     return (uint32_t)((ar+(br-ar)*t/steps)<<16)| (uint32_t)((ag+(bg-ag)*t/steps)<<8)| (uint32_t)(ab+(bb-ab)*t/steps);
 }
+
 static void wallpaper(void){
-    uint32_t a=night?0x10152E:0xC5E6FC;
-    uint32_t b=night?0x292858:0xB4B2F8;
-    for(int y=0;y<800;y+=2)rect(0,y,1280,2,mix(a,b,y,800));
-    circle(1050,550,690,420,night?0x55428D:0xA7A1F5);
-    circle(1240,460,580,340,night?0x7560B1:0xDFB3F4);
-    circle(350,900,680,470,night?0x3856A0:0x77B6E7);
-    circle(710,905,570,370,night?0x5E61C0:0xA1A8EC);
-    circle(1240,850,590,420,night?0x354B91:0x608AD9);
-    circle(-100,200,330,410,night?0x223668:0xA5D5F0);
+    // Original colorful, layered-ribbon panorama (no Apple assets).
+    uint32_t top=night?0x141738:0x183F70;
+    uint32_t bot=night?0x6D4DAD:0x8CB8F2;
+    for(int y=0;y<800;y+=2)rect(0,y,1280,2,mix(top,bot,y,800));
+    circle(1090,135,710,470,night?0x373473:0x3D68B2);
+    circle(1170,25,560,377,night?0x775CA8:0xA9A4F2);
+    circle(1240,-78,370,255,night?0xC083B7:0xE9BCE4);
+    circle(680,960,1060,600,night?0x2B438E:0x376DB4);
+    circle(420,965,925,565,night?0x405AB7:0x77A2E4);
+    circle(110,935,750,480,night?0x907BC6:0xC1C2F0);
+    circle(-245,900,640,440,night?0xBF83C2:0xECB7D6);
+    circle(-182,868,460,308,night?0xE1AED9:0xFCE0E9);
+    circle(1230,815,400,215,night?0x7058BB:0x9E9CE4);
+}
+static void alpha_rect(int x,int y,int w,int h,uint32_t rgb,int a){
+    if(a<=0)return; if(a>=255){rect(x,y,w,h,rgb);return;}
+    int x0=X(x),y0=Y(y),x1=X(x+w),y1=Y(y+h);
+    if(x0<0)x0=0;if(y0<0)y0=0;
+    if(x1>(int)fb->width)x1=(int)fb->width;
+    if(y1>(int)fb->height)y1=(int)fb->height;
+    int cr=(rgb>>16)&255,cg=(rgb>>8)&255,cb=rgb&255;
+    unsigned mr=(1u<<fb->red_mask_size)-1,mg=(1u<<fb->green_mask_size)-1,mb=(1u<<fb->blue_mask_size)-1;
+    if(!mr||!mg||!mb)return;
+    for(int yy=y0;yy<y1;yy++){
+        volatile uint32_t *line=(volatile uint32_t*)((volatile uint8_t*)fb->address+(size_t)yy*fb->pitch);
+        for(int xx=x0;xx<x1;xx++){
+            uint32_t v=line[xx];
+            int r=((v>>fb->red_mask_shift)&mr)*255/(int)mr;
+            int g=((v>>fb->green_mask_shift)&mg)*255/(int)mg;
+            int b=((v>>fb->blue_mask_shift)&mb)*255/(int)mb;
+            r=(r*(255-a)+cr*a)/255;
+            g=(g*(255-a)+cg*a)/255;
+            b=(b*(255-a)+cb*a)/255;
+            line[xx]=encode(((uint32_t)r<<16)|((uint32_t)g<<8)|(uint32_t)b);
+        }
+    }
+}
+static void shadow(int x,int y,int w,int h,int rad){
+    for(int i=15;i>1;i-=3)
+        roundrect(x-i/2,y+i/2,w+i,h+i,rad+i/2,night?0x233052:0x5B658D);
 }
 static void bar(void){
-    rect(0,0,1280,40,night?0x20253E:0xEBF2FA);
-    rect(0,39,1280,1,night?0x414661:0xD7E2F0);
-    roundrect(19,9,23,23,7,night?0x8DA8FF:0x4366C6);
-    text(26,14,"N",2,night?0x18223B:0xFFFFFF);
-    text(62,14,"NOVA",2,night?0xFFFFFF:0x1E2B45);
-    text(140,17,"FILE    VIEW    WINDOW    HELP",1,night?0xDDE5F7:0x425373);
-    text(1063,17,"NOVA NATIVE 0.2",1,night?0xE3EBFC:0x455777);
+    alpha_rect(0,0,1280,36,night?0x14172A:0xFFFFFF,night?220:202);
+    rect(0,36,1280,1,night?0x374469:0xDDE3F0);
+    roundrect(21,7,22,22,7,night?0xEDF1FF:0x293F72);
+    text(27,12,"N",2,night?0x31427A:0xFFFFFF);
+    text(61,13,screen==1?"Finder":apps[screen],2,night?0xFFFFFF:0x1F2B40);
+    text(166,16,"File     Edit     View     Go     Window     Help",1,night?0xDCE7FC:0x2C384F);
+    // Compact original status glyphs.
+    circle(1045,14,11,9,night?0xEDF1FF:0x405978);
+    circle(1045,13,7,6,night?0x2A375B:0xEAF0F9);
+    circle(1045,16,3,3,night?0xEDF1FF:0x405978);
+    roundrect(1072,10,27,13,3,night?0xE9EFF9:0x395873);
+    rect(1100,14,3,5,night?0xE9EFF9:0x395873);
+    rect(1075,13,21,7,night?0x435674:0xE9EFF9);
+    text(1120,14,"Sat  9:41 AM",1,night?0xFFFFFF:0x28374D);
 }
+
+
 static void appicon(int x,int y,int i,int selected){
-    static const uint32_t cols[]={0x4D8AF0,0x58A2EF,0xE6A554,0x8871E5,0x4BBD9D,0x7584AB};
-    roundrect(x,y+3,53,53,13,0x8395C1);
-    roundrect(x,y,53,53,13,cols[i]);
-    if(i==0){roundrect(x+11,y+13,32,26,6,0xF7FCFF);rect(x+15,y+19,22,3,0x80B0E9);rect(x+15,y+28,14,3,0x80B0E9);}
-    if(i==1){roundrect(x+10,y+17,33,24,5,0xF6F9FF);roundrect(x+11,y+13,20,12,4,0xF6F9FF);rect(x+15,y+23,22,3,0x98CEF8);}
-    if(i==2){roundrect(x+13,y+10,28,34,4,0xFFFFFF);rect(x+18,y+18,18,2,0xC1A9F3);rect(x+18,y+25,18,2,0xC1A9F3);rect(x+18,y+32,13,2,0xC1A9F3);}
-    if(i==3){circle(x+27,y+27,18,18,0xEDE9FF);rect(x+24,y+15,6,24,0x7B64CA);rect(x+16,y+24,22,6,0x7B64CA);}
-    if(i==4){circle(x+26,y+26,17,17,0xEDFDF9);circle(x+26,y+26,8,8,0x5EC1AB);}
-    if(i==5){circle(x+26,y+26,16,16,0xEFF2FF);text(x+23,y+18,"I",2,0x65749E);}
-    if(selected)roundrect(x+23,y+63,8,4,2,night?0xE9F4FF:0x4D66C3);
+    static const uint32_t cols[]={0x5299E6,0x4E9FE9,0xF0C65B,0x8A7BDC,0xA2AABB,0x566B9B};
+    int w=58;
+    roundrect(x+2,y+4,w,w,13,night?0x323E60:0x5B6386);
+    roundrect(x,y,w,w,13,cols[i]);
+    if(i==0){
+        circle(x+29,y+28,20,20,0xEDF5FF);
+        text(x+23,y+18,"N",3,0x5489D3);
+    }else if(i==1){
+        roundrect(x+9,y+9,40,40,9,0xF0F9FF);
+        rect(x+9,y+9,20,40,0xA6D8FB);
+        rect(x+28,y+18,2,17,0x3A77AA);
+        rect(x+19,y+20,3,6,0x3A77AA);
+        rect(x+38,y+20,3,6,0x3A77AA);
+        rect(x+20,y+37,18,2,0x3A77AA);
+    }else if(i==2){
+        roundrect(x+12,y+10,34,39,5,0xFFFCF2);
+        rect(x+12,y+10,34,12,0xFFE18E);
+        for(int t=0;t<3;t++)rect(x+18,y+28+t*7,22,2,0xBFC0C6);
+    }else if(i==3){
+        roundrect(x+8,y+17,42,29,11,0xF2ECFF);
+        rect(x+20,y+24,5,16,0x8173C8);
+        rect(x+15,y+29,16,5,0x8173C8);
+        circle(x+40,y+26,4,4,0xE86B9C);
+        circle(x+35,y+36,4,4,0x81D5AE);
+    }else if(i==4){
+        circle(x+29,y+29,20,20,0xF5F8FB);
+        circle(x+29,y+29,14,14,0x8993AA);
+        circle(x+29,y+29,8,8,0xDFE6F1);
+    }else{
+        circle(x+29,y+29,19,19,0xF4F6FF);
+        text(x+24,y+20,"I",3,0x526C9A);
+    }
+    if(selected)circle(x+29,y+69,3,3,night?0xFFFFFF:0x334363);
 }
 static void dock(void){
-    roundrect(350,701,580,85,24,night?0x253251:0x8499C3);
-    roundrect(354,696,572,84,23,night?0xDBE3F0:0xF2F5FD);
-    for(int i=0;i<6;i++)appicon(380+i*91,709,i,i==screen);
+    shadow(311,692,660,88,22);
+    roundrect(307,688,665,96,23,night?0x8B8DB9:0x9DA8D1);
+    roundrect(313,693,653,85,20,night?0x2D3559:0xE4E9FA);
+    alpha_rect(313,694,653,83,night?0xCBD5EF:0xFFFFFF,night?60:82);
+    rect(326,695,627,2,night?0x66709A:0xFFFFFF);
+    for(int i=0;i<6;i++)appicon(346+i*101,704,i,i==screen);
 }
+
+
 static void deskicon(int x,int y,int i,const char *label){
     appicon(x,y,i,0);
-    text(x-4,y+62,label,1,night?0xFFFFFF:0x254267);
+    roundrect(x-12,y+69,85,16,4,night?0x243A68:0x536B99);
+    text(x-2,y+73,label,1,0xFFFFFF);
 }
+
 static uint32_t ink(void){return night?0xE8ECFA:0x24334E;}
 static uint32_t sub(void){return night?0xAEBEDA:0x657695;}
 static uint32_t panel(void){return night?0x212B42:0xFFFFFF;}
