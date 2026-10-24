@@ -11,6 +11,7 @@
 #include "pmm.h"
 #include "scheduler.h"
 #include "pci.h"
+#include "interrupts.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -149,6 +150,7 @@ static uint64_t usable_memory_mb=0;
 static uint64_t nova_heartbeats=0;
 static uint32_t nova_last_free_pages=0;
 static bool nova_pmm_test_ok=false;
+static bool nova_timer_one_second_reported=false;
 static char shell_input[64]="";
 static unsigned shell_len=0;
 static char shell_output[3][100]={"NOVA SHELL 0.5","TYPE HELP FOR COMMANDS",""};
@@ -455,7 +457,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"HELP  LS  CAT  MEM  PMM  PCI  TASKS  UNAME",1,secondary);
+        text(406,608,"HELP  LS  CAT  MEM  PMM  PCI  TASKS  UPTIME",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -586,9 +588,11 @@ static void nova_show_metric(const char *prefix,uint64_t value,const char *suffi
     shell_result(line);
 }
 static void shell_execute(void){
-    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT UNAME MEM PMM PCI TASKS CLEAR");
+    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT UNAME MEM PMM PCI TASKS UPTIME CLEAR");
     else if(nova_file_equal(shell_input,"LS"))shell_result("NOTES.TXT   README.TXT   TODO.TXT");
-    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.6 X86_64");
+    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.7 X86_64");
+    else if(nova_file_equal(shell_input,"UPTIME"))
+        nova_show_metric("SYSTEM UPTIME (SEC) ",nova_timer_ticks/100u,NULL,0);
     else if(nova_file_equal(shell_input,"MEM"))
         nova_show_metric("USABLE RAM (MiB) ",usable_memory_mb,NULL,0);
     else if(nova_file_equal(shell_input,"PMM"))
@@ -695,11 +699,34 @@ static void keyboard_scancode(uint8_t key){
     extended=false;
     if(changed)redraw();
 }
+/* Executed through the x86-64 interrupt stub with interrupts disabled.
+ * Keep short, nonblocking and side-effect free except for the PIC EOI.
+ */
+void nova_timer_interrupt(void){
+    nova_timer_ticks++;
+    __asm__ volatile("outb %0,%1"::"a"((uint8_t)0x20),"Nd"((uint16_t)0x20));
+}
+/* Fatal exceptions are deliberately not returned from. */
+__attribute__((noreturn))
+void nova_exception_panic(void){
+    serial_log("NOVA_EXCEPTION_FATAL\n");
+    for(;;)__asm__ volatile("cli; hlt");
+}
+
 static void input_loop(void){
     bool was_pressed=false;
-    uint32_t polls=0;
+    uint64_t last_tick=0;
     for(;;){
-        if((++polls & 0x7FFFFu)==0)nova_job_step();
+        uint64_t now=nova_timer_ticks;
+        if(now!=last_tick){
+            last_tick=now;
+            // 100Hz timer, one cooperative kernel callback every 50ms.
+            if(now%5==0)nova_job_step();
+            if(now>=100&&!nova_timer_one_second_reported){
+                nova_timer_one_second_reported=true;
+                serial_log("NOVA_TIMER_1S_OK\n");
+            }
+        }
         uint8_t status=inb(0x64);
         if(!(status&1)){__asm__ volatile("pause");continue;}
         uint8_t value=inb(0x60);
@@ -752,5 +779,9 @@ void kmain(void){
     else serial_log("NOVA_PS2_MOUSE_UNAVAILABLE\n");
     struct nova_file *initial=nova_file_find("NOTES.TXT");
     if(initial)serial_log("NOVA_RAMFS_READY\n");
+    if(nova_interrupts_init()){
+        serial_log("NOVA_IDT_PIT_READY\n");
+        nova_interrupts_enable();
+    }
     redraw();input_loop();idle();
 }
