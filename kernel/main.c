@@ -18,7 +18,7 @@ __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t requests_end[] = LIMINE_REQUESTS_END_MARKER;
 
 static struct limine_framebuffer *fb;
-static int screen = 0, player = 9, coin = 22, score = 0;
+static int screen = 1, player = 9, coin = 22, score = 0;
 static const char *names[] = {"HOME","FILES","SYSTEM","ARCADE","HELP"};
 
 static inline uint8_t inb(uint16_t port) {
@@ -215,113 +215,144 @@ static void deskicon(int x,int y,int i,const char *label){
 static uint32_t ink(void){return night?0xE8ECFA:0x24334E;}
 static uint32_t sub(void){return night?0xAEBEDA:0x657695;}
 static uint32_t panel(void){return night?0x212B42:0xFFFFFF;}
+
 static void window_draw(void){
-    roundrect(178,100,930,571,22,night?0x0F1527:0x647CA7);
-    roundrect(174,92,932,571,22,panel());
-    roundrect(174,92,932,56,21,night?0x2C3853:0xFBFCFF);
-    rect(174,122,932,27,night?0x2C3853:0xFBFCFF);
-    circle(201,119,8,8,0xFF625E);
-    circle(226,119,8,8,0xFFBF50);
-    circle(251,119,8,8,0x35CA64);
-    text(560,113,apps[screen],2,ink());
-    rect(174,149,932,1,night?0x3D465E:0xE4EAF4);
-    rect(174,150,202,513,night?0x2A3652:0xE9EFF8);
-    text(197,174,"FAVORITES",1,sub());
-    const char *titles[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT"};
+    shadow(159,78,944,552,15);
+    roundrect(156,76,947,558,17,night?0x242B45:0xFFFFFF);
+    roundrect(156,76,947,58,17,night?0x343C58:0xF7F8FC);
+    rect(156,110,947,25,night?0x343C58:0xF7F8FC);
+    circle(181,99,7,7,0xFF5F58);
+    circle(204,99,7,7,0xFEBE2E);
+    circle(227,99,7,7,0x29C840);
+    text(480,99,apps[screen],2,night?0xEDF3FF:0x273248);
+    rect(156,134,947,1,night?0x454D68:0xE4E9F0);
+    rect(156,135,208,499,night?0x2E354C:0xE8EBF4);
+    // Sidebar: Finder-like navigation, sections and colored location dots.
+    text(175,155,"FAVORITES",1,night?0x9DACCA:0x929BAB);
+    const char *nav[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT"};
+    static const uint32_t hue[]={0x7F9FE6,0x57A8F1,0xE9B85A,0x9788E6,0x94ABC7,0x7A95C6};
     for(int i=0;i<6;i++){
-        int y=207+i*64;
-        if(screen==i)roundrect(187,y-8,177,45,11,night?0x43557E:0xCADAF6);
-        roundrect(200,y,28,28,8,screen==i?(night?0x7399EA:0x5D82D7):(night?0x405171:0xBCCCE7));
-        text(207,y+7,"*",1,night?0xFAFCFF:0xFFFFFF);
-        text(239,y+8,titles[i],1,screen==i?ink():sub());
+        int y=181+i*57;
+        if(screen==i)roundrect(164,y-7,193,39,9,night?0x4B5975:0xD0D6E3);
+        circle(183,y+11,9,9,hue[i]);
+        text(179,y+7,i==3?"+":" ",1,0xFFFFFF);
+        text(205,y+8,nav[i],1,screen==i?(night?0xFFFFFF:0x253451):(night?0xCFD6E8:0x5A6376));
     }
-    text(199,625,"NOVA 0.2",1,sub());
+    text(174,559,"LOCATIONS",1,night?0x9DACCA:0x929BAB);
+    circle(181,589,6,6,0x6AA6EC);
+    text(198,586,"NOVA SYSTEM",1,night?0xD9E0F2:0x6A7488);
+    // Toolbar divider and understated chrome.
+    rect(364,135,1,499,night?0x47536D:0xDBE0EB);
+    rect(365,135,738,42,night?0x292F49:0xFDFEFF);
+    text(387,148,"<    >",2,night?0xABBDDE:0x8C9CAE);
+    roundrect(828,142,249,28,9,night?0x3B4862:0xEDF0F6);
+    circle(847,156,6,6,night?0xB4C0D1:0x8B9BAB);
+    text(864,153,"Search",1,night?0xB4C0D1:0x8B9BAB);
+    rect(365,177,738,1,night?0x47536D:0xEFF1F7);
+}
+static void folder(int x,int y,const char *name){
+    roundrect(x,y+18,91,66,11,0x5897DA);
+    roundrect(x,y+9,48,22,8,0x73B5F1);
+    roundrect(x+1,y+23,89,59,9,0x6EB4F1);
+    roundrect(x+7,y+27,77,49,7,0x90C9F7);
+    text(x+2,y+94,name,1,night?0xE6EDFC:0x475872);
 }
 static void app_content(void){
-    uint32_t fg=ink(),secondary=sub(),white=panel();
-    if(screen==0){
-        text(414,190,"Good to see you.",3,fg);
-        text(415,240,"Welcome to your independent desktop.",1,secondary);
-        roundrect(414,278,651,142,19,night?0x36476C:0xDFE9FC);
-        roundrect(441,307,49,49,13,0x6589E0);
-        text(455,323,"N",2,0xFFFFFF);
-        text(513,303,"NOVA OS",3,night?0xEEF3FF:0x3457AB);
-        text(514,359,"Your own kernel. Your own future.",1,night?0xD9E4FC:0x5D7297);
-        roundrect(414,437,314,151,18,night?0x303E5B:0xF3F6FC);
-        roundrect(745,437,320,151,18,night?0x303E5B:0xF3F6FC);
-        text(440,460,"DESKTOP",2,fg);
-        text(440,499,"A clean place to build.",1,secondary);
-        text(440,527,"Press 2 for Finder.",1,secondary);
-        text(771,460,"ARCADE",2,fg);
-        text(771,499,"A game built in the kernel.",1,secondary);
-        text(771,527,"Press 4 to play.",1,secondary);
-        text(415,623,"EXPERIMENTAL KERNEL - NOT READY TO REPLACE WINDOWS",1,night?0xF6B2C5:0xAA6077);
-    }else if(screen==1){
-        text(414,184,"Finder",3,fg);
-        text(414,231,"Browse your NOVA system.",1,secondary);
-        roundrect(414,271,649,290,15,night?0x303E5B:0xF2F5FB);
-        roundrect(441,299,71,59,12,0x73B0F4);
-        rect(452,322,49,24,0xE5F6FF);
-        text(535,311,"NOVA SYSTEM",2,fg);
-        text(536,355,"Boot files and storage are not available yet.",1,secondary);
-        rect(445,390,578,1,night?0x4A5772:0xD8E0EF);
-        text(447,420,"RECENT FILES",2,fg);
-        text(447,463,"No files available in this preview.",1,secondary);
-        text(447,513,"A filesystem driver is still being developed.",1,secondary);
+    uint32_t fg=ink(),secondary=sub();
+    uint32_t pale=night?0x323E59:0xF3F6FB;
+    if(screen==1){
+        text(397,197,"RECENTS",2,fg);
+        text(397,231,"Favorites   /   NOVA System",1,secondary);
+        rect(394,253,678,1,night?0x3D4661:0xE8ECF2);
+        folder(409,286,"DESKTOP");
+        folder(561,286,"DOCUMENTS");
+        folder(715,286,"DOWNLOADS");
+        folder(872,286,"PICTURES");
+        rect(394,426,678,1,night?0x3D4661:0xE8ECF2);
+        text(397,450,"YOUR NOVA",2,fg);
+        text(400,495,"Personal folders will appear here when filesystem",1,secondary);
+        text(400,516,"support is implemented.",1,secondary);
+        roundrect(396,559,672,48,12,pale);
+        circle(422,583,11,11,0x76A9EC);
+        text(444,580,"NOVA OS NATIVE 0.3  -  EXPERIMENTAL",1,secondary);
+    }else if(screen==0){
+        text(402,197,"Welcome back.",3,fg);
+        text(405,240,"Your personal workspace. Built from scratch.",1,secondary);
+        roundrect(395,272,670,131,19,night?0x39547E:0xDBE9FC);
+        roundrect(418,294,65,65,14,0x6090E6);
+        circle(450,325,21,21,0xE8F2FF);
+        text(443,314,"N",3,0x648ECA);
+        text(507,299,"NOVA OS",3,night?0xFFFFFF:0x2D4F9A);
+        text(510,354,"Your desktop. Your rules.",1,night?0xD2DFF9:0x637BA4);
+        roundrect(396,421,321,139,16,pale);
+        roundrect(736,421,329,139,16,pale);
+        text(420,446,"Finder",2,fg);
+        text(420,483,"Explore NOVA's desktop.",1,secondary);
+        text(420,507,"Press 2 to open.",1,secondary);
+        text(759,446,"Arcade",2,fg);
+        text(759,483,"Collect the golden tile.",1,secondary);
+        text(759,507,"Press 4 to play.",1,secondary);
+        text(401,590,"PROTOTYPE  -  NOT READY TO REPLACE WINDOWS",1,night?0xE8B2C3:0xAE5772);
     }else if(screen==2){
-        text(415,182,"Notes",3,fg);
-        text(414,230,"Local scratchpad - RAM only, resets on reboot.",1,secondary);
-        roundrect(413,268,651,302,14,night?0x49412D:0xFFF8E7);
-        rect(438,315,595,1,night?0x786741:0xE3D6B7);
-        text(443,289,"UNTITLED NOTE",2,night?0xF9E9BA:0x6A572E);
-        text(443,351,note,2,night?0xF9E9BA:0x665237);
-        rect(444+(int)note_length*12,378,12,2,night?0xF9E9BA:0x665237);
-        text(419,605,"TYPE LETTERS OR SPACE. BACKSPACE DELETES.",1,secondary);
+        text(398,197,"NOTES",2,fg);
+        text(399,232,"A little space for your thoughts.",1,secondary);
+        roundrect(396,263,670,330,13,night?0x463F37:0xFFFBF1);
+        rect(396,263,670,19,night?0x9B804B:0xF5DC89);
+        text(419,298,"UNTITLED",2,night?0xFAE3A6:0x87734E);
+        rect(416,329,628,1,night?0x7A715E:0xE8DCC7);
+        text(416,355,note,2,night?0xF8ECD4:0x554E45);
+        int caret=416+(int)note_length*12;
+        if(caret>1030)caret=1030;
+        rect(caret,374,2,18,night?0xF7E1AF:0xB18F60);
+        text(402,607,"NOTES LIVE IN RAM ONLY. REBOOT ERASES THEM.",1,secondary);
     }else if(screen==3){
-        text(413,179,"NOVA Arcade",3,fg);
-        text(414,231,"Use WASD or arrow keys. Collect the gold tile.",1,secondary);
-        roundrect(412,261,656,338,16,night?0x2A3755:0xF3F6FC);
+        text(401,191,"ARCADE",3,fg);
+        text(402,231,"WASD OR ARROWS TO MOVE  -  COLLECT GOLD",1,secondary);
+        roundrect(393,257,679,338,16,pale);
         for(int i=0;i<48;i++){
-            int x=445+(i%8)*74, y=279+(i/8)*47;
-            roundrect(x,y,65,39,7,i==player?0x627FE0:(i==coin?0xE9B85D:(night?0x465676:0xD6E3F7)));
-            if(i==player)roundrect(x+21,y+9,22,22,6,0xEFF5FF);
-            if(i==coin)circle(x+32,y+20,11,11,0xFFF2BB);
+            int x=429+(i%8)*78, y=272+(i/8)*48;
+            roundrect(x,y,69,41,9,i==player?0x607EE3:(i==coin?0xE6B75C:(night?0x4B5976:0xD9E5F7)));
+            if(i==player)roundrect(x+24,y+10,21,21,6,0xF3F6FF);
+            if(i==coin)circle(x+34,y+20,11,11,0xFFF3C4);
         }
-        text(432,562,"SCORE",1,fg);
-        number(499,562,(unsigned int)score,2,night?0xF5D47E:0x4268C0);
+        text(409,610,"SCORE:",1,fg);
+        number(462,607,(unsigned int)score,2,night?0xF4D38A:0x5275B9);
     }else if(screen==4){
-        text(412,187,"System Settings",3,fg);
-        text(414,236,"Personalize your NOVA desktop.",1,secondary);
-        roundrect(413,276,647,294,17,night?0x303E5B:0xF3F6FC);
-        text(443,310,"APPEARANCE",2,fg);
-        roundrect(442,353,282,144,15,0xD5E8FF);
-        roundrect(751,353,281,144,15,0x272B4E);
-        circle(630,409,58,52,0x9DA9F1);
-        circle(952,408,58,52,0x7461B1);
-        text(452,461,"LIGHT",1,0x2F518B);
-        text(767,461,"DARK",1,0xF5EFFF);
-        text(443,529,"Press T to change appearance.",1,secondary);
+        text(399,192,"SYSTEM SETTINGS",2,fg);
+        text(400,233,"Customize the way NOVA looks.",1,secondary);
+        roundrect(396,264,672,327,17,pale);
+        text(419,290,"APPEARANCE",2,fg);
+        roundrect(423,336,297,172,14,0xE2EDFC);
+        roundrect(742,336,297,172,14,0x353D65);
+        circle(614,421,88,73,0xA4B9E9);
+        circle(940,418,88,73,0x7562AF);
+        text(437,480,"LIGHT",1,0x3C588B);
+        text(757,480,"DARK",1,0xEDF1FF);
+        text(421,551,"Press T to toggle appearance.",1,secondary);
     }else{
-        text(414,183,"About NOVA",3,fg);
-        text(414,236,"NOVA OS Native 0.2 - Independent Preview",1,secondary);
-        roundrect(414,273,648,300,18,night?0x303E5B:0xF3F6FC);
-        roundrect(441,301,76,76,17,0x4E78DD);
-        text(461,324,"N",4,0xFFFFFF);
-        text(541,307,"NOVA OS",3,fg);
-        text(542,353,"VERSION 0.2 - X86-64",1,secondary);
-        rect(442,405,592,1,night?0x53617F:0xD3DFEF);
-        text(445,429,"Kernel: NOVA Native",1,fg);
-        text(445,455,"Bootloader: Limine   Input: PS/2 Keyboard",1,fg);
-        text(445,481,"Graphics: Software Framebuffer",1,fg);
-        text(445,519,"No Linux, no Debian, no NOVA ads.",1,secondary);
-        text(414,608,"Keys 1-6 switch apps. ESC goes Home. T changes theme.",1,secondary);
+        text(398,191,"ABOUT THIS NOVA",2,fg);
+        text(399,230,"An independent operating system project.",1,secondary);
+        roundrect(396,260,673,327,17,pale);
+        roundrect(422,293,74,74,17,0x5B8BE0);
+        circle(459,330,24,24,0xE5F0FE);
+        text(449,318,"N",4,0x5787CB);
+        text(519,297,"NOVA OS",3,fg);
+        text(522,352,"NATIVE 0.3  -  X86-64",1,secondary);
+        rect(423,403,613,1,night?0x53617B:0xD6DEED);
+        text(423,430,"KERNEL         NOVA NATIVE",1,fg);
+        text(423,457,"BOOTLOADER     LIMINE",1,fg);
+        text(423,484,"GRAPHICS       FRAMEBUFFER",1,fg);
+        text(423,511,"INPUT          KEYBOARD / PS2",1,fg);
+        text(423,550,"Independent. Ad-free. Early preview.",1,secondary);
+        text(405,608,"KEYS 1-6: APPS     ESC: HOME     T: THEME",1,secondary);
     }
 }
+
 static void desktop(void){
     wallpaper();
-    deskicon(59,111,1,"FINDER");
-    deskicon(59,235,2,"NOTES");
-    deskicon(59,358,3,"ARCADE");
+    deskicon(1166,92,1,"FILES");
+    deskicon(1166,214,2,"NOTES");
+    deskicon(1166,336,3,"ARCADE");
     bar();
     window_draw();
     app_content();
