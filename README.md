@@ -1,42 +1,52 @@
-# NOVA OS Native 0.1 — its own kernel, not Debian
+# NOVA OS Native 0.2 — Independent macOS-inspired desktop preview
 
-**Independent, freestanding x86-64 hobby OS**, booted with Limine.
-This is not based on Debian or Linux, and it is not a website.
-Source code contains a framebuffer desktop, keyboard input (PS/2 emulator)
-and a basic tile game. No adverts, tracking, or accounts.
+NOVA OS Native is a small, **independent x86-64 operating-system prototype**.
+It is **not based on Debian or Linux** and does not run in a web browser.
+The desktop is drawn directly by NOVA's freestanding C kernel, using the
+Limine bootloader's framebuffer.
 
-**Important:** It cannot yet replace Windows. It has no modern hardware
-drivers, general-purpose filesystem, process isolation, network stack,
-installer, security updates, Windows app compatibility, or full desktop apps.
+## Download the ISO
+[NOVA Native v0.2 prerelease](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.2)
 
-## Download the built ISO
+Download **nova-os-native-x86_64.iso** (about 4.9 MB). A SHA256 file is included.
+GitHub Actions built and uploaded it successfully. VirtualBox boot success
+is **not yet confirmed** on real user machines.
 
-Download the experimental ISO from the **private GitHub prerelease**:
-https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.1
+## Desktop features
+- macOS-inspired menu bar, wallpaper, rounded windows and floating dock
+- Six keyboard-selectable views: Welcome, Finder, Notes, Arcade, Settings, About
+- Light and dark wallpaper: press **T** outside of Notes
+- Editable Notes held in RAM (letters, space, backspace); NOT saved to disk
+- Playable tile collecting game in Arcade (WASD or arrow keys)
+- No NOVA analytics or advertising
 
-Asset: nova-os-native-x86_64.iso (about 4.8 MB).
-Checksum: nova-os-native-x86_64.iso.sha256.
-The compiler and ISO creation succeeded in GitHub Actions.
-The image has NOT been VM-boot-tested and is NOT an installable Windows replacement.
-GitHub Actions artifacts are unavailable for this account due to its artifact-storage quota,
-so the workflow publishes the ISO as a private release asset instead.
+Controls: keys **1–6** switch views, **Esc** returns Home, **T** changes
+appearance (outside Notes), game uses **WASD / arrow keys**.
+There is **no mouse driver** in this prototype; the dock and window controls
+are graphical, not clickable.
 
 ## VirtualBox on Windows 11
-Create a NEW VM: Other/Unknown (64-bit), 2 GB RAM, 1 CPU, BIOS firmware.
-No hard disk is necessary. Attach the ISO as optical media. Boot and press
-1, 2, 3, 4 or 5 to switch screens. Arcade controls: WASD or arrow keys.
-Do not install or flash it onto your main PC.
+Create a new VM with **Other/Unknown (64-bit)** or **Other Linux (64-bit)**,
+one CPU, 2048 MB RAM, and BIOS firmware (EFI off). No hard disk is necessary.
+Attach the ISO as the virtual optical drive. Do not install it on your PC.
 
-## Build on Linux
-The workflow clones the official Limine x86-64 C template to obtain proper
-freestanding linker options and BIOS/UEFI boot-image construction, copies
-our original kernel and font into its source tree, then runs make with Clang.
+If Limine says **"This CPU does not support 64-bit mode"**, the VM is not
+exposing x86-64 support. In VirtualBox, shut down the VM and select a
+**64-bit guest type**. Verify Task Manager > Performance > CPU >
+Virtualization = Enabled. The OS image cannot override VM CPU capabilities.
 
-## Future development
-Memory manager, paging, interrupts, USB input, NVMe/storage filesystems,
-install/update/recovery, drivers, networking, process isolation,
-compositor, apps, game acceleration, Windows compatibility and security
-must be implemented and tested before it could plausibly replace Windows.
+## Important limits
+This is **not safe to replace Windows**. It lacks persistent filesystems,
+installers, USB input, modern GPU and storage drivers, networking, multitasking,
+security updates, application execution and Windows game compatibility.
+Test it inside a virtual machine only. Do not flash it onto your primary drive.
+The graphics and keyboard are designed for simple emulator environments.
 
-See https://github.com/Limine-Bootloader/limine-c-template-x86-64
-for the boot template's own terms. The NOVA code is MIT licensed.
+## Build pipeline
+Pushes to `nova-os-native` trigger the private GitHub Actions ISO build.
+The workflow clones the upstream Limine C kernel template and builds NOVA's
+original C code with Clang. ISO assets are published under the GitHub
+Releases tab; Actions artifacts were unavailable due to account storage quota.
+
+Kernel source: `kernel/main.c`, `kernel/font.h`.
+License: MIT for NOVA code; upstream dependencies retain their own licenses.
