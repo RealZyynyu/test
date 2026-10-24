@@ -1,52 +1,56 @@
-# NOVA OS Native 0.2 — Independent macOS-inspired desktop preview
+# NOVA OS Native 0.3 — macOS-inspired desktop
 
-NOVA OS Native is a small, **independent x86-64 operating-system prototype**.
-It is **not based on Debian or Linux** and does not run in a web browser.
-The desktop is drawn directly by NOVA's freestanding C kernel, using the
-Limine bootloader's framebuffer.
+This is a **real, independent x86-64 hobby kernel** (not Debian, not
+Linux, and not a website) with an original desktop rendered to the
+Limine framebuffer.
 
-## Download the ISO
-[NOVA Native v0.2 prerelease](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.2)
+## Download
+Version 0.3: https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.3
 
-Download **nova-os-native-x86_64.iso** (about 4.9 MB). A SHA256 file is included.
-GitHub Actions built and uploaded it successfully. VirtualBox boot success
-is **not yet confirmed** on real user machines.
+Download `nova-os-native-x86_64.iso`, then attach it to VirtualBox as
+a virtual optical drive. A checksum and optional VM screenshot are
+included in the release.
 
-## Desktop features
-- macOS-inspired menu bar, wallpaper, rounded windows and floating dock
-- Six keyboard-selectable views: Welcome, Finder, Notes, Arcade, Settings, About
-- Light and dark wallpaper: press **T** outside of Notes
-- Editable Notes held in RAM (letters, space, backspace); NOT saved to disk
-- Playable tile collecting game in Arcade (WASD or arrow keys)
-- No NOVA analytics or advertising
+## Appearance
+- Panoramic original ribbon-style wallpaper with daytime/nighttime versions
+- Frosted-looking top menu bar with app menu, status glyphs, and clock
+- A centered six-app dock with custom NOVA app icons
+- Rounded Finder-like window, subtle shadows, red/yellow/green controls
+- Sidebar locations and content, original illustrated folder icons
+- Familiar Notes, Arcade, Settings and About screens
 
-Controls: keys **1–6** switch views, **Esc** returns Home, **T** changes
-appearance (outside Notes), game uses **WASD / arrow keys**.
-There is **no mouse driver** in this prototype; the dock and window controls
-are graphical, not clickable.
+This is an **original visual interpretation** of a macOS-like desktop,
+not a pixel-perfect Apple desktop: no Apple logos, system fonts or
+copyrighted macOS wallpapers are included.
+
+## Controls / limitations
+- **Keys 1 through 6** choose Welcome, Finder, Notes, Arcade, Settings,
+  About. The default screen is Finder.
+- **Esc** returns Home; **T** toggles light/dark theme outside Notes.
+- Arcade: **WASD** or arrow keys move your tile.
+- Notes: type letters, space or Backspace. Stored in RAM only.
+- The dock and window controls are decorative for now. **No mouse driver**.
 
 ## VirtualBox on Windows 11
-Create a new VM with **Other/Unknown (64-bit)** or **Other Linux (64-bit)**,
-one CPU, 2048 MB RAM, and BIOS firmware (EFI off). No hard disk is necessary.
-Attach the ISO as the virtual optical drive. Do not install it on your PC.
+Set a 64-bit guest type (**Other/Unknown (64-bit)** or equivalent),
+1 CPU, 2048 MB RAM, VMSVGA, BIOS boot (EFI off). No virtual hard disk
+is necessary. Mount the ISO and start the machine.
 
-If Limine says **"This CPU does not support 64-bit mode"**, the VM is not
-exposing x86-64 support. In VirtualBox, shut down the VM and select a
-**64-bit guest type**. Verify Task Manager > Performance > CPU >
-Virtualization = Enabled. The OS image cannot override VM CPU capabilities.
+If the Limine bootloader says
+`This CPU does not support 64-bit mode`, shut the VM down, verify that
+you selected a **64-bit VM guest** and check in Windows Task Manager >
+Performance > CPU that virtualization is Enabled. Changing the kernel
+UI cannot fix an incorrectly configured CPU.
 
-## Important limits
-This is **not safe to replace Windows**. It lacks persistent filesystems,
-installers, USB input, modern GPU and storage drivers, networking, multitasking,
-security updates, application execution and Windows game compatibility.
-Test it inside a virtual machine only. Do not flash it onto your primary drive.
-The graphics and keyboard are designed for simple emulator environments.
+## Safety
+This prototype CANNOT replace Windows 11. There is no persistent
+filesystem, usable installer, multitasking, USB or GPU driver stack,
+networking, security maintenance or native app ecosystem. Test in
+VirtualBox only. **Do not install it on your real disk.**
 
-## Build pipeline
-Pushes to `nova-os-native` trigger the private GitHub Actions ISO build.
-The workflow clones the upstream Limine C kernel template and builds NOVA's
-original C code with Clang. ISO assets are published under the GitHub
-Releases tab; Actions artifacts were unavailable due to account storage quota.
-
-Kernel source: `kernel/main.c`, `kernel/font.h`.
-License: MIT for NOVA code; upstream dependencies retain their own licenses.
+## Building
+GitHub Actions compiles the project on branch `nova-os-native` using
+Clang, Limine's official C template and xorriso, then publishes the ISO
+to a private GitHub prerelease (Actions artifact storage quota was full).
+Source: `kernel/main.c`, `kernel/font.h`; MIT license for original
+NOVA OS code. Upstream boot components retain their own licenses.
