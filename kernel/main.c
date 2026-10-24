@@ -780,7 +780,17 @@ void kmain(void){
     if(initial)serial_log("NOVA_RAMFS_READY\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
+        // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
+        uint64_t before_sw_irq=nova_timer_ticks;
+        __asm__ volatile("int $0x20");
+        if(nova_timer_ticks==before_sw_irq+1)
+            serial_log("NOVA_IRQ_SW_TEST_OK\n");
+        else serial_log("NOVA_IRQ_SW_TEST_FAILED\n");
         nova_interrupts_enable();
+        uint64_t flags;
+        __asm__ volatile("pushfq; popq %0":"=r"(flags)::"memory");
+        serial_log((flags&0x200)?"NOVA_IF_ENABLED\n":"NOVA_IF_DISABLED\n");
+        serial_log(inb(0x21)==0xFE?"NOVA_PIC_MASK_OK\n":"NOVA_PIC_MASK_UNEXPECTED\n");
     }
     redraw();input_loop();idle();
 }
