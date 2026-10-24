@@ -1,79 +1,80 @@
-# NOVA OS Native 0.4 — Ultra Close Desktop Preview
+# NOVA OS Native 0.5 — interactive kernel preview
 
-Independent x86-64 experimental operating-system kernel. This is not Debian,
-Linux, Windows, or a browser simulation. It boots via Limine and draws the
-desktop entirely with NOVA's own C framebuffer code.
+**Standalone, independent x86-64 C kernel** using the Limine bootloader. It is
+NOT Debian, Linux, Windows, macOS, or a website. This is a developer
+prototype, intended **only for VirtualBox/QEMU**.
 
-## Version 0.4 release
+## Download and test
 
-- [Download the bootable ISO](https://github.com/RealZyynyu/test/releases/download/nova-native-v0.4/nova-os-native-x86_64.iso)
-- [Open the GitHub release](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.4)
-- [Actual QEMU screenshot](https://github.com/RealZyynyu/test/releases/download/nova-native-v0.4/nova-os-native-preview.png)
+Release: https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.5
 
-The ISO (~5.2 MB) was compiled by GitHub Actions. The VM screenshot
-was captured automatically from QEMU (x86-64) during CI, but hardware
-compatibility beyond that environment has not been established.
+- `nova-os-native-x86_64.iso` — bootable image (~5.1 MB)
+- `nova-os-native-preview.png` — screenshot captured during an emulated boot
+- `nova-os-serial.log` — serial console boot diagnostics
+- `nova-os-native-x86_64.iso.sha256` — file checksum
 
-## Desktop appearance
+The GitHub Actions build compiled the kernel, generated an image, captured
+a QEMU preview, and verified serial output contained
+`NOVA_KERNEL_BOOT_OK` and `NOVA_RAMFS_READY`.
 
-This release explores the spacing, translucent appearance, dock-centered
-layout, rounded windows, and Finder-inspired browsing conventions of
-modern macOS while retaining original NOVA symbols, icons, and wallpaper.
+### VirtualBox (Windows 11)
 
-- Independently drawn colorful panoramic wallpaper
-- Thin top menu bar and status symbols
-- Glass-like floating six-app dock with app indicators
-- Three window-control dots, subtle shadows, unified window toolbar
-- Finder-like folders, sidebar, location indicators and search field
-- Notes, Arcade, Settings, About and Welcome screens
-- Light/dark appearance toggling
+Configure **Other/Unknown (64-bit)**, 1 CPU, **2048 MB RAM**, BIOS boot,
+with 3D acceleration disabled. Use a virtual optical drive for the ISO.
+No hard disk is required because persistence and installation aren't
+supported. A PS/2 emulated mouse is required for cursor movement. If the
+firmware says "This CPU does not support 64-bit mode", correct the VM's
+64-bit CPU configuration and verify Windows host virtualization support.
 
-### Typography and credits
+## What's technical and functional in this release
 
-The CI workflow rasterizes the open-source **Inter** typeface into glyph
-bitmaps for anti-aliased, proportional text. The font is installed only
-for the build; original font files are not committed to NOVA.
-Inter © its authors, licensed under SIL Open Font License 1.1:
-https://github.com/rsms/inter
+- **PS/2 mouse driver**: controller initialization, stream packets, relative
+  movement, left-click events, and a software-drawn cursor. Only legacy
+  *emulated PS/2* input is supported; no USB mouse driver.
+- **Mouse clickable desktop**: open apps from the dock, sidebar, desktop
+  shortcuts and welcome tiles; close/minimize the content window; choose
+  light/dark appearance in Settings; click RAM file tiles in Finder.
+  Some visible chrome remains simplified (the green control opens Finder).
+- **Small RAM-backed file table**: `NOTES.TXT`, `README.TXT` and
+  `TODO.TXT`; bounded reads/writes and a Finder-like viewer. Editing Notes
+  updates NOTES.TXT immediately, but **everything disappears after reboot**.
+- **Tiny kernel command interpreter**: open Terminal with key **7** or the
+  Tools/Terminal sidebar link. Commands: `HELP`, `LS`, `CAT NOTES.TXT`,
+  `CAT README.TXT`, `CAT TODO.TXT`, `UNAME`, `MEM`, `CLEAR`.
+- **Boot and memory reporting**: Limine memory map, basic usable memory
+  figure, serial boot diagnostics for VM smoke tests.
 
-The NOVA kernel code and original graphics are under the MIT license.
-Limine and other upstream components retain their original licenses.
-No original Apple icons, logos, system fonts, or wallpaper assets are included.
+### Keyboard controls
+- Keys **1–6**: Welcome, Finder, Notes, Arcade, Settings, About
+- **7**: Terminal (outside Notes and Terminal; switch using mouse too)
+- **Escape**: Home
+- **T**: switch appearance except inside text editors
+- Notes: type / backspace; characters stored in NOTES.TXT in volatile RAM
+- Arcade: WASD / arrow keys; collect golden tile
+- Terminal: type commands and press Enter
 
-## Keyboard
+### What NOVA still lacks
 
-- 1–6: switch between Welcome, Finder, Notes, Arcade, Settings, About
-- Escape: home screen
-- T: switch appearance, except when using Notes
-- Notes: type letters/space, Backspace to delete; RAM only (not saved)
-- Arcade: WASD or arrow keys
+This is **not a replacement for Windows**. No persistent disk filesystem,
+safe installer, process isolation, virtual memory manager, scheduler,
+USB stack, real graphics acceleration, networking, audio drivers,
+security policy or software update mechanism exists yet. The small terminal
+runs in kernel mode and is NOT a secure sandbox. The RAM files are a
+prototype, not a disk filesystem. Do not boot it on your primary PC or
+overwrite a real disk.
 
-The dock and window buttons are **visual only**, because there is no
-working mouse driver in NOVA Native yet. The search box is visual too.
-Menu bar date/time is currently illustrative, not synchronized.
+### Appearance
+An original macOS-inspired desktop, featuring a floating glass-like dock,
+Finder-style navigation, rounded windows and smooth Inter-derived text.
+No Apple branding or original proprietary assets. Inter is OFL-1.1
+licensed: https://github.com/rsms/inter
 
-## Windows 11 / VirtualBox
+## Source and build
+- `kernel/main.c` — native renderer and system input loop
+- `kernel/ps2_mouse.h` — PS/2 driver for QEMU/VirtualBox
+- `kernel/ramfs.h` — bounded RAM-only file table
+- `tools/generate_font.py` — Open Font License bitmap generation
+- `.github/workflows/build-native-iso.yml` — Clang/Limine + QEMU tests
+- `limine.conf` — boot configuration
 
-Create an **Other/Unknown (64-bit)** virtual machine with BIOS firmware,
-2048 MB RAM and one CPU. No hard drive is needed. Attach the ISO as a
-virtual optical disk and boot.
-
-If Limine says "This CPU does not support 64-bit mode", turn off the VM
-and choose a 64-bit guest type; verify virtualization support on the
-Windows 11 host. The ISO cannot fix incorrect virtual CPU settings.
-
-## Do not install on real hardware
-
-NOVA Native is not ready to replace Windows. It lacks a real filesystem,
-durable data storage, an installer, modern storage/USB/GPU/network
-drivers, usable multitasking, app execution, security mechanisms, updates,
-and Windows game compatibility. Test exclusively in a virtual machine.
-Never overwrite your Windows disk with this developer preview.
-
-## Build
-
-The GitHub Actions workflow installs Clang, xorriso, Python Pillow and
-Inter, rasterizes glyphs via `tools/generate_font.py`, and copies NOVA's
-native C kernel into the Limine C template before building the bootable ISO.
-CI optionally launches QEMU and produces a screenshot, and publishes
-the release assets to the private repository's GitHub Releases.
+The NOVA original source is MIT-licensed; dependencies retain their licenses.
