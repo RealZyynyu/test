@@ -6,6 +6,8 @@
 #include <limine.h>
 #include "font.h"
 #include "raster_font.h"
+#include "ps2_mouse.h"
+#include "ramfs.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -129,7 +131,13 @@ static void number(int x,int y,unsigned int n,int scale,uint32_t c){
 static int night=0;
 static char note[74]="HELLO FROM NOVA!";
 static unsigned int note_length=16;
-static const char *apps[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT"};
+static const char *apps[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT","TERMINAL"};
+static int window_visible=1, file_open=-1;
+static uint64_t usable_memory_mb=0;
+static char shell_input[64]="";
+static unsigned shell_len=0;
+static char shell_output[3][100]={"NOVA SHELL 0.5","TYPE HELP FOR COMMANDS",""};
+static const char *ram_labels[]={"NOTES.TXT","README.TXT","TODO.TXT"};
 
 static void circle(int cx,int cy,int rx,int ry,uint32_t color) {
     if(rx<=0||ry<=0)return;
@@ -302,9 +310,9 @@ static void window_draw(void){
         text(179,y+7,i==3?"+":" ",1,0xFFFFFF);
         text(205,y+8,nav[i],1,screen==i?(night?0xFFFFFF:0x253451):(night?0xCFD6E8:0x5A6376));
     }
-    text(174,559,"LOCATIONS",1,night?0x9DACCA:0x929BAB);
+    text(174,559,"TOOLS",1,night?0x9DACCA:0x929BAB);
     circle(181,589,6,6,0x6AA6EC);
-    text(198,586,"NOVA SYSTEM",1,night?0xD9E0F2:0x6A7488);
+    text(198,586,"TERMINAL  [7]",1,night?0xD9E0F2:0x6A7488);
     // Toolbar divider and understated chrome.
     rect(364,135,1,499,night?0x47536D:0xDBE0EB);
     rect(365,135,738,42,night?0x292F49:0xFDFEFF);
@@ -325,20 +333,29 @@ static void app_content(void){
     uint32_t fg=ink(),secondary=sub();
     uint32_t pale=night?0x323E59:0xF3F6FB;
     if(screen==1){
-        text(397,197,"RECENTS",2,fg);
-        text(397,231,"Favorites   /   NOVA System",1,secondary);
+        text(397,197,"NOVA RAM FILES",2,fg);
+        text(397,231,"RAM DISK   /   HOME",1,secondary);
         rect(394,253,678,1,night?0x3D4661:0xE8ECF2);
-        folder(409,286,"DESKTOP");
-        folder(561,286,"DOCUMENTS");
-        folder(715,286,"DOWNLOADS");
-        folder(872,286,"PICTURES");
-        rect(394,426,678,1,night?0x3D4661:0xE8ECF2);
-        text(397,450,"YOUR NOVA",2,fg);
-        text(400,495,"Personal folders will appear here when filesystem",1,secondary);
-        text(400,516,"support is implemented.",1,secondary);
-        roundrect(396,559,672,48,12,pale);
-        circle(422,583,11,11,0x76A9EC);
-        text(444,580,"NOVA OS NATIVE 0.3  -  EXPERIMENTAL",1,secondary);
+        if(file_open<0){
+            for(int i=0;i<3;i++){
+                int x=410+i*214;
+                roundrect(x,281,185,183,15,pale);
+                folder(x+44,293,ram_labels[i]);
+                text(x+29,414,ram_labels[i],1,fg);
+                text(x+25,444,"RAM ONLY",1,secondary);
+            }
+            rect(394,492,678,1,night?0x3D4661:0xE8ECF2);
+            text(399,514,"Click a file to read it. Notes can be edited.",1,secondary);
+        }else{
+            text(412,276,"< BACK",2,night?0xD4E5FF:0x427BC6);
+            text(413,327,nova_files[file_open].name,2,fg);
+            roundrect(406,368,654,148,12,pale);
+            text(426,399,nova_files[file_open].data,1,fg);
+            if(file_open==0)text(426,461,"Open Notes to edit this file.",1,secondary);
+            text(406,552,"RAM DISK - CHANGES ARE LOST AT REBOOT",1,secondary);
+        }
+        roundrect(396,571,672,36,9,pale);
+        text(410,583,"FILES: 3       RAM-ONLY VFS      NO DISK DRIVER",1,secondary);
     }else if(screen==0){
         text(402,197,"Welcome back.",3,fg);
         text(405,240,"Your personal workspace. Built from scratch.",1,secondary);
@@ -368,7 +385,7 @@ static void app_content(void){
         int caret=416+text_width(note,2);
         if(caret>1030)caret=1030;
         rect(caret,374,2,18,night?0xF7E1AF:0xB18F60);
-        text(402,607,"NOTES LIVE IN RAM ONLY. REBOOT ERASES THEM.",1,secondary);
+        text(402,607,"AUTO-SAVED TO NOTES.TXT IN RAM  -  ERASED ON REBOOT",1,secondary);
     }else if(screen==3){
         text(401,191,"ARCADE",3,fg);
         text(402,231,"WASD OR ARROWS TO MOVE  -  COLLECT GOLD",1,secondary);
@@ -406,9 +423,22 @@ static void app_content(void){
         text(423,430,"KERNEL         NOVA NATIVE",1,fg);
         text(423,457,"BOOTLOADER     LIMINE",1,fg);
         text(423,484,"GRAPHICS       FRAMEBUFFER",1,fg);
-        text(423,511,"INPUT          KEYBOARD / PS2",1,fg);
+        text(423,511,"INPUT          KEYBOARD + PS2 MOUSE",1,fg);
         text(423,550,"Independent. Ad-free. Early preview.",1,secondary);
-        text(405,608,"KEYS 1-6: APPS     ESC: HOME     T: THEME",1,secondary);
+        text(405,608,"1-7: APPS   ESC: HOME   T: THEME   MOUSE: CLICK",1,secondary);
+
+    }else if(screen==6){
+        text(402,192,"TERMINAL",3,fg);
+        text(402,236,"A tiny command interpreter running in kernel mode.",1,secondary);
+        roundrect(398,262,668,324,15,night?0x101823:0x202C40);
+        text(416,283,"NOVA NATIVE TERMINAL 0.5",1,0x7DE2AB);
+        text(417,337,shell_output[0],1,0xE3EDF9);
+        text(417,375,shell_output[1],1,0xE3EDF9);
+        text(417,413,shell_output[2],1,0xE3EDF9);
+        text(418,477,">",2,0x6FE7AC);
+        text(446,477,shell_input,2,0xE1EEFA);
+        text(406,608,"TYPE HELP, LS, CAT NOTES.TXT, MEM OR UNAME.",1,secondary);
+        if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
 
@@ -418,8 +448,7 @@ static void desktop(void){
     deskicon(1166,214,2,"NOTES");
     deskicon(1166,336,3,"ARCADE");
     bar();
-    window_draw();
-    app_content();
+    if(window_visible){window_draw();app_content();}
     dock();
 }
 static char letter(uint8_t sc){
@@ -427,49 +456,221 @@ static char letter(uint8_t sc){
         [0x10]='Q',[0x11]='W',[0x12]='E',[0x13]='R',[0x14]='T',[0x15]='Y',[0x16]='U',[0x17]='I',[0x18]='O',[0x19]='P',
         [0x1E]='A',[0x1F]='S',[0x20]='D',[0x21]='F',[0x22]='G',[0x23]='H',[0x24]='J',[0x25]='K',[0x26]='L',
         [0x2C]='Z',[0x2D]='X',[0x2E]='C',[0x2F]='V',[0x30]='B',[0x31]='N',[0x32]='M',
-        [0x39]=' '
+        [0x39]=' ',[0x02]='1',[0x03]='2',[0x04]='3',[0x05]='4',
+        [0x06]='5',[0x07]='6',[0x08]='7',[0x09]='8',[0x0A]='9',[0x0B]='0',
+        [0x34]='.',[0x35]='/',[0x0C]='-'
     };
     return sc<128?keys[sc]:0;
 }
-static void redraw(void){desktop();}
+static void redraw(void){cursor_drawn=0;desktop();cursor_paint();}
 static void move(int dx,int dy){
     int x=player%8+dx,y=player/8+dy;
     if(x<0)x=7;if(x>=8)x=0;if(y<0)y=5;if(y>=6)y=0;
     player=y*8+x;
     if(player==coin){score++;coin=(coin+13)%48;if(coin==player)coin=(coin+7)%48;}
 }
-static void keyboard(void){
-    for(;;){
-        if(!(inb(0x64)&1)){__asm__ volatile("pause");continue;}
-        uint8_t key=inb(0x60);
-        if(key==0xE0)continue;
-        if(key&0x80)continue;
-        int changed=0;
-        if(key>=0x02 && key<=0x07){screen=(int)key-0x02;changed=1;}
-        if(key==0x01){screen=0;changed=1;}
-        if(key==0x14 && screen!=2){night=!night;changed=1;}
-        if(screen==2 && key!=0x01){
-            if(key==0x0E && note_length>0){note[--note_length]=0;changed=1;}
-            else{
-                char c=letter(key);
-                if(c && note_length<62){note[note_length++]=c;note[note_length]=0;changed=1;}
-            }
-        }
-        if(screen==3){
-            int previous=player;
-            if(key==0x1E || key==0x4B)move(-1,0);
-            if(key==0x20 || key==0x4D)move(1,0);
-            if(key==0x11 || key==0x48)move(0,-1);
-            if(key==0x1F || key==0x50)move(0,1);
-            if(previous!=player)changed=1;
-        }
-        if(changed)redraw();
+
+static void serial_out(uint16_t p,uint8_t b){__asm__ volatile("outb %0,%1"::"a"(b),"Nd"(p));}
+static void serial_init(void){
+    serial_out(0x3F9,0x00);
+    serial_out(0x3FB,0x80);
+    serial_out(0x3F8,0x03);
+    serial_out(0x3F9,0x00);
+    serial_out(0x3FB,0x03);
+    serial_out(0x3FA,0xC7);
+    serial_out(0x3FC,0x0B);
+}
+static void serial_log(const char *s){
+    for(;*s;s++){
+        for(int i=0;i<20000 && !(inb(0x3FD)&0x20);i++){}
+        serial_out(0x3F8,(uint8_t)*s);
     }
 }
+#define CURSOR_W 16
+#define CURSOR_H 23
+static uint32_t cursor_under[CURSOR_W*CURSOR_H];
+static int cursor_x=0,cursor_y=0,cursor_drawn=0;
+static void cursor_hide(void){
+    if(!cursor_drawn)return;
+    for(int yy=0;yy<CURSOR_H;yy++){
+        int py=cursor_y+yy;
+        if(py<0||py>=(int)fb->height)continue;
+        volatile uint32_t *row=(volatile uint32_t*)((volatile uint8_t*)fb->address+(size_t)py*fb->pitch);
+        for(int xx=0;xx<CURSOR_W;xx++){
+            int px=cursor_x+xx;
+            if(px>=0&&px<(int)fb->width)row[px]=cursor_under[yy*CURSOR_W+xx];
+        }
+    }
+    cursor_drawn=0;
+}
+static void cursor_paint(void){
+    cursor_x=X(mouse.x);
+    cursor_y=Y(mouse.y);
+    for(int yy=0;yy<CURSOR_H;yy++){
+        int py=cursor_y+yy;
+        if(py<0||py>=(int)fb->height)continue;
+        volatile uint32_t *row=(volatile uint32_t*)((volatile uint8_t*)fb->address+(size_t)py*fb->pitch);
+        for(int xx=0;xx<CURSOR_W;xx++){
+            int px=cursor_x+xx;
+            if(px<0||px>=(int)fb->width)continue;
+            uint32_t old=row[px];
+            cursor_under[yy*CURSOR_W+xx]=old;
+            int inside=(yy<17 && xx<=yy/2 && xx<=11) ||
+                       (yy>=13 && yy<23 && xx>=5 && xx<=8 && yy<=xx+14);
+            if(inside){
+                int edge=(xx==0 || xx==yy/2 || yy==0 || yy==16);
+                row[px]=encode(edge?0x182235:0xFFFFFF);
+            }
+        }
+    }
+    cursor_drawn=1;
+}
+static void shell_copy(char *dest,size_t cap,const char *src){
+    size_t i=0;
+    for(;src[i]&&i+1<cap;i++)dest[i]=src[i];
+    dest[i]=0;
+}
+static void shell_result(const char *message){
+    shell_copy(shell_output[0],sizeof(shell_output[0]),shell_output[1]);
+    shell_copy(shell_output[1],sizeof(shell_output[1]),shell_output[2]);
+    shell_copy(shell_output[2],sizeof(shell_output[2]),message);
+}
+static void shell_execute(void){
+    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT NOTES.TXT CAT README.TXT CAT TODO.TXT");
+    else if(nova_file_equal(shell_input,"LS"))shell_result("NOTES.TXT   README.TXT   TODO.TXT");
+    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.5 X86_64");
+    else if(nova_file_equal(shell_input,"MEM")){
+        shell_result("RAM DETECTED (MIB):");
+        // Memory number is rendered directly in the terminal panel.
+    } else if(nova_file_equal(shell_input,"CLEAR")){
+        for(int i=0;i<3;i++)shell_output[i][0]=0;
+    } else if(shell_input[0]=='C' && shell_input[1]=='A' &&
+              shell_input[2]=='T' && shell_input[3]==' '){
+        struct nova_file *f=nova_file_find(shell_input+4);
+        shell_result(f?f->data:"FILE NOT FOUND");
+    } else shell_result("UNKNOWN COMMAND - TYPE HELP");
+    shell_len=0;shell_input[0]=0;
+}
+static void open_app(int app){
+    if(app<0||app>6)return;
+    window_visible=1;
+    screen=app;
+    serial_log("NOVA_APP_OPEN\n");
+}
+static void mouse_click(int x,int y){
+    // Floating dock.
+    if(y>=694&&y<=780){
+        for(int i=0;i<6;i++)if(x>=341+i*101 && x<=410+i*101){
+            open_app(i);return;
+        }
+    }
+    // Desktop shortcut icons on the right.
+    if(x>=1153&&x<=1240){
+        if(y>=92&&y<187){open_app(1);return;}
+        if(y>=214&&y<309){open_app(2);return;}
+        if(y>=336&&y<431){open_app(3);return;}
+    }
+    // Menu button restores the Welcome app.
+    if(y<38 && x<150){open_app(0);return;}
+    if(!window_visible)return;
+    if(y>=87&&y<117){
+        if(x>=170&&x<192){window_visible=0;return;}
+        if(x>=194&&x<218){window_visible=0;return;}
+        if(x>=221&&x<243){open_app(1);return;} // Green: switch to Finder
+    }
+    for(int i=0;i<6;i++){
+        int yy=181+i*57;
+        if(x>=164&&x<=356 && y>=yy-7&&y<=yy+33){open_app(i);return;}
+    }
+    if(x>=169&&x<=355&&y>=570&&y<=613){open_app(6);return;}
+    if(screen==4&&y>=336&&y<=510){
+        if(x>=423&&x<=722)night=0;
+        if(x>=742&&x<=1041)night=1;
+    }
+    if(screen==1){
+        if(file_open>=0){
+            if(x>=390&&x<540&&y>=270&&y<325)file_open=-1;
+            return;
+        }
+        if(y>=273&&y<=468){
+            for(int i=0;i<3;i++)if(x>=410+i*214&&x<=595+i*214){
+                file_open=i;return;
+            }
+        }
+    }
+    if(screen==0){
+        if(y>=421&&y<=560&&x>=395&&x<=717){open_app(1);return;}
+        if(y>=421&&y<=560&&x>=736&&x<=1065){open_app(3);return;}
+    }
+}
+static void keyboard_scancode(uint8_t key){
+    static bool extended=false;
+    if(key==0xE0){extended=true;return;}
+    if(key&0x80){extended=false;return;}
+    int changed=0;
+    if(key==0x01){open_app(0);changed=1;}
+    if(screen!=2 && screen!=6 && key>=0x02 && key<=0x08){
+        open_app((int)key-0x02);changed=1;
+    }
+    if(key==0x14 && screen!=2&&screen!=6){night=!night;changed=1;}
+    if(screen==2 && key!=0x01) {
+        if(key==0x0E && note_length>0){note[--note_length]=0;changed=1;}
+        else {
+            char c=letter(key);
+            if(c && note_length<62){note[note_length++]=c;note[note_length]=0;changed=1;}
+        }
+        if(changed)nova_file_write("NOTES.TXT",note,note_length);
+    }
+    if(screen==6 && key!=0x01) {
+        if(key==0x0E && shell_len>0){shell_input[--shell_len]=0;changed=1;}
+        else if(key==0x1C){shell_execute();changed=1;}
+        else{
+            char c=letter(key);
+            if(c&&shell_len<49){shell_input[shell_len++]=c;shell_input[shell_len]=0;changed=1;}
+        }
+    }
+    if(screen==3){
+        int prev=player;
+        if(key==0x1E || (extended&&key==0x4B))move(-1,0);
+        if(key==0x20 || (extended&&key==0x4D))move(1,0);
+        if(key==0x11 || (extended&&key==0x48))move(0,-1);
+        if(key==0x1F || (extended&&key==0x50))move(0,1);
+        if(prev!=player)changed=1;
+    }
+    extended=false;
+    if(changed)redraw();
+}
+static void input_loop(void){
+    bool was_pressed=false;
+    for(;;){
+        uint8_t status=inb(0x64);
+        if(!(status&1)){__asm__ volatile("pause");continue;}
+        uint8_t value=inb(0x60);
+        if(status&0x20){
+            if(nova_mouse_byte(value)){
+                cursor_hide();
+                if(mouse.left&&!was_pressed){
+                    mouse_click(mouse.x,mouse.y);
+                    redraw();
+                    serial_log("NOVA_MOUSE_CLICK\n");
+                }
+                was_pressed=mouse.left;
+                cursor_paint();
+            }
+        }else keyboard_scancode(value);
+    }
+}
+
 void kmain(void){
     if(!LIMINE_BASE_REVISION_SUPPORTED(base_revision))idle();
     if(!fb_request.response||fb_request.response->framebuffer_count<1)idle();
     fb=fb_request.response->framebuffers[0];
     if(!fb||fb->bpp!=32||fb->memory_model!=LIMINE_FRAMEBUFFER_RGB||fb->width<800||fb->height<600)idle();
-    redraw();keyboard();idle();
+    serial_init();
+    serial_log("NOVA_KERNEL_BOOT_OK\n");
+    if(nova_mouse_init())serial_log("NOVA_PS2_MOUSE_ENABLED\n");
+    else serial_log("NOVA_PS2_MOUSE_UNAVAILABLE\n");
+    struct nova_file *initial=nova_file_find("NOTES.TXT");
+    if(initial)serial_log("NOVA_RAMFS_READY\n");
+    redraw();input_loop();idle();
 }
