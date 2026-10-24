@@ -150,7 +150,7 @@ static uint64_t usable_memory_mb=0;
 static uint64_t nova_heartbeats=0;
 static uint32_t nova_last_free_pages=0;
 static bool nova_pmm_test_ok=false;
-static bool nova_timer_one_second_reported=false;
+
 static char shell_input[64]="";
 static unsigned shell_len=0;
 static char shell_output[3][100]={"NOVA SHELL 0.5","TYPE HELP FOR COMMANDS",""};
@@ -704,6 +704,8 @@ static void keyboard_scancode(uint8_t key){
  */
 void nova_timer_interrupt(void){
     nova_timer_ticks++;
+    if(nova_timer_ticks==1)serial_log("NOVA_TIMER_IRQ1_OK\n");
+    if(nova_timer_ticks==100)serial_log("NOVA_TIMER_1S_OK\n");
     __asm__ volatile("outb %0,%1"::"a"((uint8_t)0x20),"Nd"((uint16_t)0x20));
 }
 /* Fatal exceptions are deliberately not returned from. */
@@ -722,10 +724,7 @@ static void input_loop(void){
             last_tick=now;
             // 100Hz timer, one cooperative kernel callback every 50ms.
             if(now%5==0)nova_job_step();
-            if(now>=100&&!nova_timer_one_second_reported){
-                nova_timer_one_second_reported=true;
-                serial_log("NOVA_TIMER_1S_OK\n");
-            }
+
         }
         uint8_t status=inb(0x64);
         if(!(status&1)){__asm__ volatile("pause");continue;}
