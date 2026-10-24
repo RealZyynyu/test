@@ -90,7 +90,10 @@ jobs:
           grep -q NOVA_SCHED_SELFTEST_OK nova-os-serial.log
           grep -q NOVA_PCI_INVENTORY_READY nova-os-serial.log
           grep -q NOVA_IDT_PIT_READY nova-os-serial.log
-          grep -q NOVA_TIMER_1S_OK nova-os-serial.log
+          grep -q NOVA_IRQ_HANDLER_CALLED nova-os-serial.log
+          grep -q NOVA_IRQ_SW_TEST_OK nova-os-serial.log
+          grep -q NOVA_IF_ENABLED nova-os-serial.log
+          grep -q NOVA_PIC_MASK_OK nova-os-serial.log
           cat nova-os-serial.log
       - name: Publish ISO as a private GitHub prerelease
         env:
@@ -110,7 +113,7 @@ jobs:
           else
             gh release create "$tag" "${files[@]}" \
               --target "$GITHUB_SHA" \
-              --title "NOVA OS Native 0.7 (Interrupts and Timer)" \
-              --notes "Independent NOVA x86-64 kernel with protected interrupt descriptors, remapped PIC, 100Hz PIT, timer-driven cooperative jobs, memory, mouse, PCI and RAM files; checked by QEMU boot tests. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
+              --title "NOVA OS Native 0.7 (Interrupt Foundation)" \
+              --notes "Independent NOVA x86-64 kernel with basic IDT and a verified software-IRQ test, experimental PIT, fallback cooperative jobs, memory, mouse, PCI and RAM files; checked by QEMU boot tests. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
               --prerelease
           fi
