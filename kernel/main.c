@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <limine.h>
 #include "font.h"
+#include "raster_font.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -47,13 +48,76 @@ static void rect(int x,int y,int w,int h,uint32_t rgb) {
         for(int xx=x0;xx<x1;xx++)row[xx]=c;
     }
 }
-static void text(int x,int y,const char *s,int scale,uint32_t col) {
-    for(;*s;s++,x+=6*scale) {
+
+/* Anti-aliased Inter glyph rasterizer.
+   Glyph bitmaps are generated during build from Ubuntu's OFL-licensed Inter.
+   No Apple fonts or font files are embedded in the repository. */
+static void color_pixel(int x,int y,uint32_t rgb,unsigned alpha){
+    if(alpha==0)return;
+    int x0=X(x),y0=Y(y),x1=X(x+1),y1=Y(y+1);
+    if(x0<0)x0=0;if(y0<0)y0=0;
+    if(x1>(int)fb->width)x1=(int)fb->width;
+    if(y1>(int)fb->height)y1=(int)fb->height;
+    if(x0>=x1||y0>=y1)return;
+    uint32_t target=encode(rgb);
+    if(alpha>=255){
+        for(int py=y0;py<y1;py++){
+            volatile uint32_t *line=(volatile uint32_t*)((volatile uint8_t*)fb->address+(size_t)py*fb->pitch);
+            for(int px=x0;px<x1;px++)line[px]=target;
+        }
+        return;
+    }
+    uint32_t tr=(rgb>>16)&255,tg=(rgb>>8)&255,tb=rgb&255;
+    const unsigned mr=(1u<<fb->red_mask_size)-1,mg=(1u<<fb->green_mask_size)-1,mb=(1u<<fb->blue_mask_size)-1;
+    for(int py=y0;py<y1;py++){
+        volatile uint32_t *line=(volatile uint32_t*)((volatile uint8_t*)fb->address+(size_t)py*fb->pitch);
+        for(int px=x0;px<x1;px++){
+            uint32_t v=line[px];
+            uint32_t r=((v>>fb->red_mask_shift)&mr)*255/mr;
+            uint32_t g=((v>>fb->green_mask_shift)&mg)*255/mg;
+            uint32_t b=((v>>fb->blue_mask_shift)&mb)*255/mb;
+            r=(r*(255-alpha)+tr*alpha)/255;
+            g=(g*(255-alpha)+tg*alpha)/255;
+            b=(b*(255-alpha)+tb*alpha)/255;
+            line[px]=encode((r<<16)|(g<<8)|b);
+        }
+    }
+}
+static const uint8_t *font_advance_for(int size){
+    return size==1?font_tiny_advance:size==2?font_regular_advance:font_title_advance;
+}
+static int font_height_for(int size){
+    return size==1?FONT_TINY_H:size==2?FONT_REGULAR_H:FONT_TITLE_H;
+}
+static int font_width_for(int size){
+    return size==1?FONT_TINY_W:size==2?FONT_REGULAR_W:FONT_TITLE_W;
+}
+static const uint8_t *font_bitmap_for(int size,int glyph){
+    return size==1?font_tiny_data[glyph]:size==2?font_regular_data[glyph]:font_title_data[glyph];
+}
+static int text_width(const char *s,int size){
+    const uint8_t *adv=font_advance_for(size);
+    int width=0;
+    for(;*s;s++){unsigned char c=(unsigned char)*s;if(c>=32&&c<127)width+=adv[c-32];}
+    return width;
+}
+static void text(int x,int y,const char *s,int size,uint32_t color){
+    const uint8_t *advance=font_advance_for(size);
+    int gw=font_width_for(size), gh=font_height_for(size);
+    for(;*s;s++){
         unsigned char c=(unsigned char)*s;
-        if(c>='a' && c<='z')c=(unsigned char)(c-32); if(c<32||c>126)continue;
-        for(int row=0;row<7;row++) for(int px=0;px<5;px++)
-            if(glyphs[c-32][row]&(1u<<(4-px)))
-                rect(x+px*scale,y+row*scale,scale,scale,col);
+        if(c<32||c>126)continue;
+        int glyph=c-32;
+        const uint8_t *pixels=font_bitmap_for(size,glyph);
+        for(int row=0;row<gh;row++){
+            for(int col=0;col<gw;col++){
+                int p=row*gw+col;
+                uint8_t packed=pixels[p/2];
+                unsigned alpha=((p&1)?(packed&15):(packed>>4))*17u;
+                if(alpha)color_pixel(x+col,y+row,color,alpha);
+            }
+        }
+        x+=advance[glyph];
     }
 }
 static void number(int x,int y,unsigned int n,int scale,uint32_t c){
@@ -301,7 +365,7 @@ static void app_content(void){
         text(419,298,"UNTITLED",2,night?0xFAE3A6:0x87734E);
         rect(416,329,628,1,night?0x7A715E:0xE8DCC7);
         text(416,355,note,2,night?0xF8ECD4:0x554E45);
-        int caret=416+(int)note_length*12;
+        int caret=416+text_width(note,2);
         if(caret>1030)caret=1030;
         rect(caret,374,2,18,night?0xF7E1AF:0xB18F60);
         text(402,607,"NOTES LIVE IN RAM ONLY. REBOOT ERASES THEM.",1,secondary);
