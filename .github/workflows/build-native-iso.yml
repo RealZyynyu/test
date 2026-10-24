@@ -4,7 +4,7 @@ on:
     branches: [nova-os-native]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -28,13 +28,18 @@ jobs:
           test -s _builder/template.iso
           mv _builder/template.iso nova-os-native-x86_64.iso
           sha256sum nova-os-native-x86_64.iso > nova-os-native-x86_64.iso.sha256
-      - name: Publish ISO build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nova-os-native-iso
-          path: |
-            nova-os-native-x86_64.iso
-            nova-os-native-x86_64.iso.sha256
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
+      - name: Publish ISO as a private GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="nova-native-v0.1"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256 --clobber
+          else
+            gh release create "$tag" nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "NOVA OS Native 0.1 (Experimental)" \
+              --notes "Independent x86-64 kernel developer preview. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
+              --prerelease
+          fi
