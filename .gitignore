@@ -1,0 +1,4 @@
+.build/
+output/
+*.iso
+*.iso.sha256

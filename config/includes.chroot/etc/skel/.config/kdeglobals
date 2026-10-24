@@ -1,0 +1,7 @@
+[General]
+ColorScheme=BreezeLight
+Name=NOVA
+[KDE]
+LookAndFeelPackage=org.kde.breeze.desktop
+[Icons]
+Theme=breeze

@@ -1,0 +1,9 @@
+WELCOME TO NOVA OS 0.1
+This is a real Debian Linux distribution with KDE Plasma.
+It is not Apple macOS or compatible with every Mac or Windows application.
+Includes Firefox, Dolphin, LibreOffice, VLC, and playable Linux games.
+You may install additional Linux software with Discover.
+Test the live session or a virtual machine first.
+The installer can erase data. Back up files and seek experienced help
+before attempting to install it on a computer.
+No NOVA advertisements or NOVA analytics are included.

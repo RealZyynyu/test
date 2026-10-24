@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Welcome to NOVA OS
+Exec=kate /usr/share/doc/nova-os/START-HERE.txt
+Icon=help-about
+Categories=Utility;Documentation;
+Terminal=false

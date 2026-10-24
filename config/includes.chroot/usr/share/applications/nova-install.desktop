@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install NOVA OS
+Exec=/usr/local/bin/nova-install
+Icon=drive-harddisk
+Categories=System;
+Terminal=false

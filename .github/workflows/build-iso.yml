@@ -1,0 +1,54 @@
+name: Build NOVA OS ISO
+on:
+  push:
+    branches: [nova-os-build]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          df -h .
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/powershell /opt/hostedtoolcache
+          sudo docker system prune -af || true
+          df -h .
+      - name: Check shell syntax
+        run: |
+          bash -n build.sh
+          bash -n config/includes.chroot/usr/local/bin/nova-first-login
+          sh -n config/includes.chroot/usr/local/bin/nova-install
+      - name: Build Debian 13 ISO
+        run: |
+          docker run --rm --privileged -v "$GITHUB_WORKSPACE:/workspace" -w /workspace debian:trixie bash -euc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates live-build debootstrap xorriso squashfs-tools dosfstools mtools isolinux syslinux-common grub-pc-bin grub-efi-amd64-bin librsvg2-bin
+            ./build.sh
+          '
+      - name: Verify output
+        run: |
+          test -s output/nova-os-amd64.iso
+          (cd output && sha256sum -c nova-os-amd64.iso.sha256)
+          file output/nova-os-amd64.iso
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-os-amd64-iso
+          path: |
+            output/nova-os-amd64.iso
+            output/nova-os-amd64.iso.sha256
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-os-build-log
+          path: output/build.log
+          if-no-files-found: ignore

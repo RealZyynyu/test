@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NOVA desktop setup
+Exec=/usr/local/bin/nova-first-login
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true
+Terminal=false

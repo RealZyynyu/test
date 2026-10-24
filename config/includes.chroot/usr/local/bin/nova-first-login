@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -uo pipefail
+mkdir -p "$HOME/.config/nova-os"
+marker="$HOME/.config/nova-os/panels-v1.ok"
+if [[ "$#" -gt 0 && "$1" == '--retry' ]]; then rm -f "$marker"; fi
+[[ -f "$marker" ]] && exit 0
+layout=/usr/local/share/nova-os/plasma-layout.js
+[[ -r "$layout" ]] || exit 0
+for i in {1..25}; do
+  if command -v qdbus6 >/dev/null 2>&1 &&
+     qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$(cat "$layout")" >/dev/null 2>&1; then
+    touch "$marker"
+    exit 0
+  fi
+  sleep 1
+done
+exit 0
