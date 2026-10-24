@@ -22,6 +22,7 @@ struct nova_idtr {
 } __attribute__((packed));
 static struct nova_idt_entry nova_idt[256];
 static struct nova_idtr nova_idtr_data;
+static uint16_t nova_kernel_cs=0;
 static volatile uint64_t nova_timer_ticks=0;
 static bool nova_idt_ready=false;
 extern void nova_irq_timer_stub(void);
@@ -38,7 +39,7 @@ static void nova_idt_set(unsigned vec,void (*handler)(void)){
     uintptr_t addr=(uintptr_t)handler;
     struct nova_idt_entry *g=&nova_idt[vec];
     g->offset_0_15=(uint16_t)addr;
-    g->segment=0x08; // x86-64 kernel code segment under Limine
+    g->segment=nova_kernel_cs; // Current Limine-provided kernel CS
     g->ist=0;
     g->flags=0x8e; // ring 0, present, 64-bit interrupt gate
     g->offset_16_31=(uint16_t)(addr>>16);
@@ -61,6 +62,7 @@ static void nova_pic_remap(void){
 }
 static bool nova_interrupts_init(void){
     __asm__ volatile("cli");
+    __asm__ volatile("mov %%cs, %0":"=r"(nova_kernel_cs));
     for(unsigned i=0;i<256;i++)nova_idt_set(i,nova_exception_stub);
     for(unsigned i=32;i<40;i++)nova_idt_set(i,nova_irq_master_stub);
     for(unsigned i=40;i<48;i++)nova_idt_set(i,nova_irq_slave_stub);
