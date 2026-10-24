@@ -9,9 +9,17 @@ and a basic tile game. No adverts, tracking, or accounts.
 drivers, general-purpose filesystem, process isolation, network stack,
 installer, security updates, Windows app compatibility, or full desktop apps.
 
-## Get ISO using GitHub Actions
-Open Actions > Build NOVA Native ISO > the latest workflow run. If it succeeds,
-download artifact "nova-os-native-iso"; extract nova-os-native-x86_64.iso.
+## Download the built ISO
+
+Download the experimental ISO from the **private GitHub prerelease**:
+https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.1
+
+Asset: nova-os-native-x86_64.iso (about 4.8 MB).
+Checksum: nova-os-native-x86_64.iso.sha256.
+The compiler and ISO creation succeeded in GitHub Actions.
+The image has NOT been VM-boot-tested and is NOT an installable Windows replacement.
+GitHub Actions artifacts are unavailable for this account due to its artifact-storage quota,
+so the workflow publishes the ISO as a private release asset instead.
 
 ## VirtualBox on Windows 11
 Create a NEW VM: Other/Unknown (64-bit), 2 GB RAM, 1 CPU, BIOS firmware.
