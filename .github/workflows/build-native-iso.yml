@@ -75,8 +75,13 @@ jobs:
       - name: QEMU serial boot smoke test
         run: |
           # Require actual kernel entry and RAM filesystem initialization.
-          timeout 16s qemu-system-x86_64 -m 512 -vga std -cdrom nova-os-native-x86_64.iso \
-            -boot d -display none -monitor none -serial file:nova-os-serial.log -no-reboot || test "$?" -eq 124
+          timeout 18s qemu-system-x86_64 -m 512 -vga std -cdrom nova-os-native-x86_64.iso \
+            -boot d -display none -monitor none -serial file:nova-os-serial.log \
+            -d int,guest_errors -D nova-qemu-debug.log -no-reboot || test "$?" -eq 124
+          echo "=== NOVA serial boot output ==="
+          cat nova-os-serial.log || true
+          echo "=== QEMU trace tail ==="
+          tail -35 nova-qemu-debug.log || true
           test -s nova-os-serial.log
           grep -q NOVA_KERNEL_BOOT_OK nova-os-serial.log
           grep -q NOVA_RAMFS_READY nova-os-serial.log
