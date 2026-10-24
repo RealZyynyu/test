@@ -8,6 +8,9 @@
 #include "raster_font.h"
 #include "ps2_mouse.h"
 #include "ramfs.h"
+#include "pmm.h"
+#include "scheduler.h"
+#include "pci.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -20,6 +23,10 @@ static volatile struct limine_framebuffer_request fb_request = {
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_memmap_request nova_memmap_request={
     .id=LIMINE_MEMMAP_REQUEST_ID,.revision=0
+};
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_hhdm_request nova_hhdm_request={
+    .id=LIMINE_HHDM_REQUEST_ID,.revision=0
 };
 
 __attribute__((used, section(".limine_requests_end")))
@@ -139,6 +146,9 @@ static unsigned int note_length=16;
 static const char *apps[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT","TERMINAL"};
 static int window_visible=1, file_open=-1;
 static uint64_t usable_memory_mb=0;
+static uint64_t nova_heartbeats=0;
+static uint32_t nova_last_free_pages=0;
+static bool nova_pmm_test_ok=false;
 static char shell_input[64]="";
 static unsigned shell_len=0;
 static char shell_output[3][100]={"NOVA SHELL 0.5","TYPE HELP FOR COMMANDS",""};
@@ -429,7 +439,10 @@ static void app_content(void){
         text(423,457,"BOOTLOADER     LIMINE",1,fg);
         text(423,484,"GRAPHICS       FRAMEBUFFER",1,fg);
         text(423,511,"INPUT          KEYBOARD + PS2 MOUSE",1,fg);
-        text(423,550,"Independent. Ad-free. Early preview.",1,secondary);
+        text(423,550,"Physical pages:",1,secondary);
+        number(580,548,(unsigned)nova_pmm.pages,1,fg);
+        text(650,550,"PCI devices:",1,secondary);
+        number(758,548,(unsigned)nova_pci.devices,1,fg);
         text(405,608,"1-7: APPS   ESC: HOME   T: THEME   MOUSE: CLICK",1,secondary);
 
     }else if(screen==6){
@@ -442,7 +455,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"TYPE HELP, LS, CAT NOTES.TXT, MEM OR UNAME.",1,secondary);
+        text(406,608,"HELP  LS  CAT  MEM  PMM  PCI  TASKS  UNAME",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -542,14 +555,49 @@ static void shell_result(const char *message){
     shell_copy(shell_output[1],sizeof(shell_output[1]),shell_output[2]);
     shell_copy(shell_output[2],sizeof(shell_output[2]),message);
 }
+
+static void nova_job_heartbeat(void){nova_heartbeats++;}
+static void nova_job_memory_poll(void){nova_last_free_pages=nova_free_pages();}
+static void nova_job_file_health(void){
+    // Keep the RAM-only NOTES.TXT file size consistent with its note editor.
+    struct nova_file *f=nova_file_find("NOTES.TXT");
+    if(f && f->size>=sizeof(f->data))f->size=sizeof(f->data)-1;
+}
+static void nova_append_uint(char *s,size_t capacity,uint64_t value){
+    size_t len=0;
+    while(len<capacity && s[len])len++;
+    char tmp[24];size_t count=0;
+    do{tmp[count++]=(char)('0'+value%10);value/=10;}while(value&&count<sizeof(tmp));
+    while(count>0 && len+1<capacity)s[len++]=tmp[--count];
+    if(len<capacity)s[len]=0;
+}
+static void nova_append_text(char *s,size_t capacity,const char *part){
+    size_t at=0;
+    while(at<capacity && s[at])at++;
+    for(size_t i=0;part[i]&&at+1<capacity;i++)s[at++]=part[i];
+    if(at<capacity)s[at]=0;
+}
+static void nova_show_metric(const char *prefix,uint64_t value,const char *suffix,
+                             uint64_t other){
+    char line[100]="";
+    nova_append_text(line,sizeof(line),prefix);
+    nova_append_uint(line,sizeof(line),value);
+    if(suffix){nova_append_text(line,sizeof(line),suffix);nova_append_uint(line,sizeof(line),other);}
+    shell_result(line);
+}
 static void shell_execute(void){
-    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT NOTES.TXT CAT README.TXT CAT TODO.TXT");
+    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT UNAME MEM PMM PCI TASKS CLEAR");
     else if(nova_file_equal(shell_input,"LS"))shell_result("NOTES.TXT   README.TXT   TODO.TXT");
-    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.5 X86_64");
-    else if(nova_file_equal(shell_input,"MEM")){
-        shell_result("RAM DETECTED (MIB):");
-        // Memory number is rendered directly in the terminal panel.
-    } else if(nova_file_equal(shell_input,"CLEAR")){
+    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.6 X86_64");
+    else if(nova_file_equal(shell_input,"MEM"))
+        nova_show_metric("USABLE RAM (MiB) ",usable_memory_mb,NULL,0);
+    else if(nova_file_equal(shell_input,"PMM"))
+        nova_show_metric("PMM FREE=",nova_free_pages()," / TOTAL=",nova_pmm.pages);
+    else if(nova_file_equal(shell_input,"TASKS"))
+        nova_show_metric("JOBS=",nova_job_count," RUNS=",nova_job_total_runs());
+    else if(nova_file_equal(shell_input,"PCI"))
+        nova_show_metric("PCI DEVICES=",nova_pci.devices," NET=",nova_pci.network);
+    else if(nova_file_equal(shell_input,"CLEAR")){
         for(int i=0;i<3;i++)shell_output[i][0]=0;
     } else if(shell_input[0]=='C' && shell_input[1]=='A' &&
               shell_input[2]=='T' && shell_input[3]==' '){
@@ -649,7 +697,9 @@ static void keyboard_scancode(uint8_t key){
 }
 static void input_loop(void){
     bool was_pressed=false;
+    uint32_t polls=0;
     for(;;){
+        if((++polls & 0x7FFFFu)==0)nova_job_step();
         uint8_t status=inb(0x64);
         if(!(status&1)){__asm__ volatile("pause");continue;}
         uint8_t value=inb(0x60);
@@ -682,6 +732,22 @@ void kmain(void){
         }
     }
     serial_log("NOVA_KERNEL_BOOT_OK\n");
+    if(!nova_pmm_init(nova_memmap_request.response,nova_hhdm_request.response)){
+        serial_log("NOVA_PMM_UNAVAILABLE\n");
+    }else{
+        serial_log("NOVA_PMM_READY\n");
+        nova_pmm_test_ok=nova_pmm_self_test();
+        serial_log(nova_pmm_test_ok?"NOVA_PMM_SELFTEST_OK\n":"NOVA_PMM_SELFTEST_FAILED\n");
+    }
+    nova_pci_scan();
+    serial_log("NOVA_PCI_INVENTORY_READY\n");
+    bool jobs_ready=nova_job_add("HEARTBEAT",nova_job_heartbeat);
+    jobs_ready=jobs_ready && nova_job_add("MEMORY",nova_job_memory_poll);
+    jobs_ready=jobs_ready && nova_job_add("RAMFS",nova_job_file_health);
+    if(jobs_ready){
+        nova_job_step();nova_job_step();nova_job_step();
+        serial_log(nova_job_total_runs()==3?"NOVA_SCHED_SELFTEST_OK\n":"NOVA_SCHED_SELFTEST_FAILED\n");
+    }
     if(nova_mouse_init())serial_log("NOVA_PS2_MOUSE_ENABLED\n");
     else serial_log("NOVA_PS2_MOUSE_UNAVAILABLE\n");
     struct nova_file *initial=nova_file_find("NOTES.TXT");
