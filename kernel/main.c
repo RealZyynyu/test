@@ -457,7 +457,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"HELP  LS  CAT  MEM  PMM  PCI  TASKS  UPTIME",1,secondary);
+        text(406,608,"HELP  LS  CAT  MEM  PMM  PCI  TASKS  TICKS",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -588,11 +588,11 @@ static void nova_show_metric(const char *prefix,uint64_t value,const char *suffi
     shell_result(line);
 }
 static void shell_execute(void){
-    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT UNAME MEM PMM PCI TASKS UPTIME CLEAR");
+    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT UNAME MEM PMM PCI TASKS TICKS CLEAR");
     else if(nova_file_equal(shell_input,"LS"))shell_result("NOTES.TXT   README.TXT   TODO.TXT");
     else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.7 X86_64");
-    else if(nova_file_equal(shell_input,"UPTIME"))
-        nova_show_metric("SYSTEM UPTIME (SEC) ",nova_timer_ticks/100u,NULL,0);
+    else if(nova_file_equal(shell_input,"TICKS"))
+        nova_show_metric("HARDWARE TIMER IRQS ",nova_timer_ticks>0?nova_timer_ticks-1:0,NULL,0);
     else if(nova_file_equal(shell_input,"MEM"))
         nova_show_metric("USABLE RAM (MiB) ",usable_memory_mb,NULL,0);
     else if(nova_file_equal(shell_input,"PMM"))
@@ -704,7 +704,7 @@ static void keyboard_scancode(uint8_t key){
  */
 void nova_timer_interrupt(void){
     nova_timer_ticks++;
-    if(nova_timer_ticks==1)serial_log("NOVA_TIMER_IRQ1_OK\n");
+    if(nova_timer_ticks==1)serial_log("NOVA_IRQ_HANDLER_CALLED\n");
     if(nova_timer_ticks==100)serial_log("NOVA_TIMER_1S_OK\n");
     __asm__ volatile("outb %0,%1"::"a"((uint8_t)0x20),"Nd"((uint16_t)0x20));
 }
@@ -717,14 +717,18 @@ void nova_exception_panic(void){
 
 static void input_loop(void){
     bool was_pressed=false;
-    uint64_t last_tick=0;
+    uint64_t last_tick=nova_timer_ticks;
+    uint32_t polling_fallback=0;
     for(;;){
         uint64_t now=nova_timer_ticks;
         if(now!=last_tick){
             last_tick=now;
-            // 100Hz timer, one cooperative kernel callback every 50ms.
+            polling_fallback=0;
+            // Run kernel jobs from PIT ticks when available.
             if(now%5==0)nova_job_step();
-
+        }else if((++polling_fallback & 0x7FFFFu)==0){
+            // Fallback for VMs without a functioning legacy IRQ0.
+            nova_job_step();
         }
         uint8_t status=inb(0x64);
         if(!(status&1)){__asm__ volatile("pause");continue;}
