@@ -33,13 +33,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="nova-native-v0.1"
+          tag="nova-native-v0.2"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256 --clobber
           else
             gh release create "$tag" nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256 \
               --target "$GITHUB_SHA" \
-              --title "NOVA OS Native 0.1 (Experimental)" \
-              --notes "Independent x86-64 kernel developer preview. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
+              --title "NOVA OS Native 0.2 (Desktop Preview)" \
+              --notes "macOS-inspired NOVA OS independent x86-64 kernel preview. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
               --prerelease
           fi
