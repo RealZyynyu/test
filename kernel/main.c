@@ -50,7 +50,7 @@ static void rect(int x,int y,int w,int h,uint32_t rgb) {
 static void text(int x,int y,const char *s,int scale,uint32_t col) {
     for(;*s;s++,x+=6*scale) {
         unsigned char c=(unsigned char)*s;
-        if(c<32||c>126)continue;
+        if(c>='a' && c<='z')c=(unsigned char)(c-32); if(c<32||c>126)continue;
         for(int row=0;row<7;row++) for(int px=0;px<5;px++)
             if(glyphs[c-32][row]&(1u<<(4-px)))
                 rect(x+px*scale,y+row*scale,scale,scale,col);
@@ -282,7 +282,7 @@ static void keyboard(void){
         if(key>=0x02 && key<=0x07){screen=(int)key-0x02;changed=1;}
         if(key==0x01){screen=0;changed=1;}
         if(key==0x14 && screen!=2){night=!night;changed=1;}
-        if(screen==2 && key!=0x14 && key!=0x01){
+        if(screen==2 && key!=0x01){
             if(key==0x0E && note_length>0){note[--note_length]=0;changed=1;}
             else{
                 char c=letter(key);
