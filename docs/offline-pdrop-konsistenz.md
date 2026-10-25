@@ -38,3 +38,29 @@ keine Ring-3-Ausführung, keine aktivierbaren Prozessadressräume und keine
 hardwareseitige Isolation. Eine kompromittierte Kernel-Komponente kann
 Metadaten verändern. Keine ISO, kein Release, keine Installation.
 `final_release` bleibt manuell gesperrt.
+
+## Retrybare Freigabe
+
+Seitentabellen-Frames werden von den Blättern zur Wurzel freigegeben; der
+Root-Frame bleibt erhalten, bis alle Kinder freigegeben sind. Stack- und
+ELF-Frames werden ebenfalls vom Listenende freigegeben. Erfolgreich
+freigegebene Tickets werden sofort aus dem Deskriptor entfernt. Meldet ein
+generationserhaltender Callback einen Fehler, bleiben der fehlgeschlagene
+Frame und alle noch nicht freigegebenen Tickets für einen erneuten
+`PDROP` erhalten. Teilweise zerstörte Adressräume können nicht mehr für
+Mappings oder Lookups verwendet werden.
+
+Host-Regressionstests injizieren einmalige Fehler nach bereits erfolgreichen
+Freigaben und prüfen Ticket-Erhalt, Frame-Zähler und den erfolgreichen
+Wiederholungsversuch. Legacy-Freigabe-Callbacks mit `void` können Fehler
+prinzipbedingt nicht melden; der native Eigentümerpfad verwendet boolesche
+PMM-Ticket-Callbacks.
+
+## Verbleibende Grenzen
+
+Ein Callback muss garantieren, dass `false` bedeutet: der aktuelle Frame
+wurde **nicht** freigegeben. Callback-Verhalten außerhalb dieses Vertrags
+ist nicht absicherbar. Die Bereinigung ist single-core und nicht SMP-atomar.
+Sie verwaltet Offline-Metadaten, bietet aber keine laufende Prozessisolation.
+Keine ISO, kein Release, keine Installation; `final_release` bleibt manuell
+gesperrt.
