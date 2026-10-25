@@ -91,6 +91,16 @@ static void stage_free(void *ctx,void *page){
     assert(!"invalid test frame");
 }
 
+static bool stage_physical(void *ctx,const void *page,uint64_t *out){
+    (void)ctx;
+    if(!out)return false;
+    for(unsigned i=0;i<4;i++)if(page==staged_frames[i] && staged_used[i]){
+        *out=UINT64_C(0x300000)+(uint64_t)i*4096u;
+        return true;
+    }
+    return false;
+}
+
 int main(void){
     assert(nova_ramfs_self_test());
     image_fixture();
@@ -115,7 +125,7 @@ int main(void){
     struct nova_process_table table={0};
     uint32_t pid=0;
     assert(nova_process_stage(&table,"DISK:/APP.ELF",
-        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,NULL,&pid)==NOVA_PROCESS_OK);
+        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,stage_physical,NULL,&pid)==NOVA_PROCESS_OK);
     assert(pid==1 && staged_count==2 && nova_process_count(&table)==1);
     struct nova_process_image *process=nova_process_find(&table,pid);
     assert(process && process->entry==0x401000 && process->page_count==2);
@@ -174,31 +184,31 @@ int main(void){
     assert(nova_cap_unregister(&policy,pid));
     assert(!nova_cap_unregister(&policy,pid));
     assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",0,fetched,1));
-    assert(nova_process_drop(&table,pid,stage_free,NULL));
+    assert(nova_process_drop(&table,pid,stage_free,stage_physical,NULL));
     assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_RAM_READ));
     assert(staged_count==0 && nova_process_count(&table)==0);
     /* A stale policy slot must not grant rights after process teardown or
        accidentally transfer rights to the next monotonically numbered PID. */
     uint32_t stale=0;
     assert(nova_process_stage(&table,"DISK:/APP.ELF",
-        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,NULL,&stale)==NOVA_PROCESS_OK);
+        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,stage_physical,NULL,&stale)==NOVA_PROCESS_OK);
     assert(stale!=pid);
     assert(nova_cap_register(&policy,&table,stale));
     assert(nova_cap_grant_trusted(&policy,&table,stale,NOVA_CAP_RAM_READ));
-    assert(nova_process_drop(&table,stale,stage_free,NULL));
+    assert(nova_process_drop(&table,stale,stage_free,stage_physical,NULL));
     assert(!nova_cap_check(&policy,&table,stale,NOVA_CAP_RAM_READ));
     assert(!nova_cap_grant_trusted(&policy,&table,stale,NOVA_CAP_DISK_READ));
     assert(nova_cap_unregister(&policy,stale));
     uint32_t fresh=0;
     assert(nova_process_stage(&table,"DISK:/APP.ELF",
-        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,NULL,&fresh)==NOVA_PROCESS_OK);
+        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,stage_physical,NULL,&fresh)==NOVA_PROCESS_OK);
     assert(fresh!=stale && fresh!=pid);
     assert(nova_cap_register(&policy,&table,fresh));
     assert(nova_cap_current(&policy,&table,fresh)==0);
     assert(!nova_cap_read_file(&policy,&table,fresh,&vfs,
                                "DISK:/APP.ELF",0,fetched,4));
     assert(nova_cap_unregister(&policy,fresh));
-    assert(nova_process_drop(&table,fresh,stage_free,NULL));
+    assert(nova_process_drop(&table,fresh,stage_free,stage_physical,NULL));
     assert(staged_count==0);
     /* File metadata can be located, but disk modification remains forbidden. */
     uint8_t *second_ph=elf_byte(120);
