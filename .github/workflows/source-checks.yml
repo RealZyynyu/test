@@ -78,6 +78,22 @@ jobs:
             -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_process_image.c -o /tmp/nova-process-test-sanitized
           /tmp/nova-process-test-sanitized
+  paging:
+    name: Offline PML4 mapping and W^X tests (no CR3 and no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test x86-64 page tables with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_paging.c -o /tmp/nova-paging-test
+          /tmp/nova-paging-test
+      - name: Check rollback and physical mappings under Clang sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_paging.c -o /tmp/nova-paging-sanitized
+          /tmp/nova-paging-sanitized
   fat16:
     name: Read-only FAT16 host tests
     runs-on: ubuntu-24.04
