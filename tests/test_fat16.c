@@ -99,6 +99,10 @@ static void verify(uint32_t partition_start){
     /* File chain stops prematurely: reading 600 bytes must fail. */
     w16(disk[partition_start+1],4,0xFFFF);
     assert(!nova_fat16_read(&vol,&file,0,contents,600));
+    w16(disk[partition_start+1],4,0xFFF7); /* Bad cluster */
+    assert(!nova_fat16_read(&vol,&file,0,contents,600));
+    w16(disk[partition_start+1],4,0xFFF0); /* Reserved cluster */
+    assert(!nova_fat16_read(&vol,&file,0,contents,600));
     w16(disk[partition_start+1],4,3);
 
     /* Malformed BPB and volume signature are rejected. */
