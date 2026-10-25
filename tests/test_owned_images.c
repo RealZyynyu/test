@@ -585,6 +585,35 @@ static void test_retryable_space_teardown(void){
     assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
 }
 
+static bool retire_owner_for_test(void *ctx,uint64_t owner){
+    (void)ctx;
+    return nova_owner_retire(owner);
+}
+static void test_retryable_owner_retirement(void){
+    setup();
+    uint64_t owner=0;
+    assert(nova_owner_create(&owner));
+    struct nova_process_table table={0};
+    uint32_t pid=0;
+    assert(stage(&table,owner,&pid)==NOVA_PROCESS_OK);
+    struct nova_frame_ticket orphan={0};
+    assert(nova_page_alloc_owned_ticket(NOVA_FRAME_GENERAL,owner,&orphan));
+    assert(!nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
+                                            retire_owner_for_test,NULL));
+    struct nova_process_image *image=nova_process_find(&table,pid);
+    assert(image&&image->owner_retirement_pending&&image->owner==owner);
+    assert(image->staged&&image->guarded&&image->page_count==0);
+    assert(nova_pmm_ticket_valid(&orphan));
+    assert(nova_pmm.in_use==1&&!nova_owner_retire(owner));
+    /* Once the unrelated owner frame is resolved, PDROP retries only owner
+     * retirement; it must not attempt to free image frames a second time. */
+    assert(nova_page_free_ticket(&orphan));
+    assert(nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
+                                           retire_owner_for_test,NULL));
+    assert(nova_process_find(&table,pid)==NULL);
+    assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
+}
+
 int main(void){
     assert(strcmp(nova_elf_result_name(NOVA_ELF_OK),
                   "VALID STATIC ELF64 (NOT EXECUTED)")==0);
@@ -599,6 +628,7 @@ int main(void){
     test_offline_drop_preflight();
     test_retryable_image_release();
     test_retryable_space_teardown();
+    test_retryable_owner_retirement();
     puts("Owned offline ELF and page tables: owner isolation, rollback, forged and stale tickets OK.");
     return 0;
 }
