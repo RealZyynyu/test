@@ -82,9 +82,15 @@ fehlschlägt, der Tombstone erhalten bleibt, der fremde Frame unberührt bleibt 
 ein späterer `PDROP`-Versuch nach Freigabe des Orphan-Frames den Eigentümer und
 Prozessslot korrekt entfernt.
 
-## Noch offener Fehlerpfad: fehlgeschlagener PSTAGE-Rollback
+## PSTAGE-Rollback mit reserviertem Wiederherstellungszustand
 
-Die hier ergänzte Tombstone-Logik deckt die Freigabe nach erfolgreicher Image-Staging-Phase ab. Ein separater Randfall bleibt offen: Wenn bereits während `nova_process_stage_impl()` ein Fehler auftritt und dessen eigener Freigabe-Callback ebenfalls fehlschlägt, ignoriert der aktuelle Staging-Code den Rückgabewert des Rollbacks. Dann kann ein `staged=false`-Deskriptor mit verbleibenden Tickets zurückbleiben und später von einer neuen Staging-Anfrage als freier Slot angesehen werden. Das ist **nicht** durch den neuen Owner-Tombstone behoben und muss vor einer Finalprüfung separat korrigiert und mit Callback-Fehlerinjektion getestet werden.
+Der zuvor offene Fehlerpfad ist im Quellcode adressiert. Wenn `nova_process_stage_impl()` nach einem Fehler nicht alle bereits zugeteilten Frames freigeben kann, liefert es `NOVA_PROCESS_ROLLBACK_PENDING` zurück und markiert den Slot mit `rollback_pending`. Der Slot bleibt ausdrücklich **nicht gestaged**, erhält keine PID und wird weder von der normalen Prozesssuche gefunden noch von einer neuen Staging-Anfrage überschrieben. Die verbliebenen Frames samt Generationstickets bleiben im Deskriptor erhalten.
+
+Die Freigabe- und Zuteilungsprüfungen berücksichtigen diese ausstehenden Slots auch bei der Suche nach physischen Aliassen. Vor dem nächsten `PSTAGE` versucht der Kernel, alle ausstehenden Rollbacks erneut auszuführen. Der Retry gibt nur die noch gespeicherten Tickets frei. Falls die Eigentümerstilllegung anschließend noch scheitert, bleibt ein nullseitiger Pending-Eintrag mit der Eigentümer-ID erhalten; der nächste Retry versucht dann ausschließlich die Stilllegung. Ein Fehler bei der Freigabe darf somit weder den Slot noch die einzige bekannte Eigentümer-ID verlieren.
+
+Ein vom Allocator zurückgegebener verdächtiger Frame wird weiterhin absichtlich nicht freigegeben. Bei owner-gebundenen Zuteilungen bleibt in diesem Fall die Eigentümer-ID auch dann erhalten, wenn die übrigen Image-Frames zurückgerollt wurden. Das verhindert eine vergessene Eigentümerstilllegung, garantiert aber keine automatische Wiederherstellung des verdächtigen Frames.
+
+Der Host-Regressionstest `test_retryable_stage_rollback` injiziert einen Lese- und einen einmaligen Freigabefehler während `PSTAGE`. Er prüft den nicht gestaged reservierten Slot, die Möglichkeit eines zweiten unabhängigen Images in einem anderen Slot, den Erhalt aller Tickets und die getrennte Wiederholung der Eigentümerstilllegung nach Beseitigung eines zusätzlichen Frames. Die Implementierung ist dokumentiert; ihr tatsächlicher Ausführungsstatus muss am CI-Lauf des konkreten Commits verifiziert werden.
 
 ## Verbleibende Grenzen
 
