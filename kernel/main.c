@@ -651,12 +651,40 @@ static enum nova_elf_result nova_elf_check_path(const char *path,
 /* Staged images, offline page tables and stacks are kernel-only data.
  * The global PMM role ledger prevents cross-class release or reinterpretation.
  * No ring-3 program execution or hardware isolation is implemented. */
-static void *nova_process_page_allocate(void *ctx){
-    (void)ctx;return nova_page_alloc_role(NOVA_FRAME_IMAGE);
+/* Image frames retain allocation-time PMM generations in their staged
+ * descriptors. Pointer-only frees are intentionally not used for images. */
+static bool nova_image_ticket_allocate(void *ctx,void **frame,
+                                       uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation)return false;
+    *frame=NULL;*generation=0;
+    struct nova_frame_ticket ticket={0};
+    if(!nova_page_alloc_ticket(NOVA_FRAME_IMAGE,&ticket))return false;
+    *frame=ticket.frame;
+    *generation=ticket.generation;
+    return true;
 }
-static void nova_process_page_release(void *ctx,void *page){
-    (void)ctx;(void)nova_page_free_role(page,NOVA_FRAME_IMAGE);
+static bool nova_image_ticket_physical(void *ctx,const void *frame,
+                                       uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=(void *)frame,.generation=generation,.role=NOVA_FRAME_IMAGE
+    };
+    return nova_pmm_physical_ticket(&ticket,out);
 }
+static bool nova_image_ticket_release(void *ctx,void *frame,
+                                      uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=frame,.generation=generation,.role=NOVA_FRAME_IMAGE
+    };
+    return nova_page_free_ticket(&ticket);
+}
+static const struct nova_process_guard_ops nova_image_guard_ops={
+    .allocate=nova_image_ticket_allocate,
+    .physical=nova_image_ticket_physical,
+    .release=nova_image_ticket_release
+};
 static bool nova_process_page_phys(void *ctx,const void *page,uint64_t *out){
     (void)ctx;return nova_pmm_physical_role(page,NOVA_FRAME_IMAGE,out);
 }
@@ -883,10 +911,9 @@ static void shell_execute(void){
         else{
             struct nova_elf_path source={.vfs=&nova_vfs_state,.path=path};
             uint32_t pid=0;
-            enum nova_process_result status=nova_process_stage(
+            enum nova_process_result status=nova_process_stage_guarded(
                 &nova_processes,path,nova_elf_from_vfs,&source,file_size,
-                nova_process_page_allocate,nova_process_page_release,
-                nova_process_page_phys,NULL,&pid);
+                nova_process_page_phys,&nova_image_guard_ops,NULL,&pid);
             if(status==NOVA_PROCESS_OK){
                 struct nova_process_image *img=nova_process_find(&nova_processes,pid);
                 size_t slot=nova_process_index(img);
@@ -902,21 +929,21 @@ static void shell_execute(void){
                             /* Never leave a half-registered image behind. */
                             (void)nova_cap_unregister(&nova_app_policy,pid);
                             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                            (void)nova_process_drop(&nova_processes,pid,
-                                nova_process_page_release,nova_process_page_phys,NULL);
+                            (void)nova_process_drop_guarded(&nova_processes,pid,
+                nova_process_page_phys,&nova_image_guard_ops,NULL);
                             shell_result("PRIVATE SAVE SLOT UNAVAILABLE");
                         }
                     }else{
                         nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                        (void)nova_process_drop(&nova_processes,pid,
-                            nova_process_page_release,nova_process_page_phys,NULL);
+                        (void)nova_process_drop_guarded(&nova_processes,pid,
+                nova_process_page_phys,&nova_image_guard_ops,NULL);
                         shell_result("CAPABILITY REGISTRY FULL");
                     }
                 }else{
                     /* Both stack and table frames roll back on any failure. */
                     nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                    (void)nova_process_drop(&nova_processes,pid,
-                        nova_process_page_release,nova_process_page_phys,NULL);
+                    (void)nova_process_drop_guarded(&nova_processes,pid,
+                nova_process_page_phys,&nova_image_guard_ops,NULL);
                     shell_result(nova_pt_status_name(mapped));
                 }
             }else shell_result(nova_process_result_name(status));
@@ -1008,8 +1035,8 @@ static void shell_execute(void){
             (void)nova_save_unregister(&nova_private_saves,pid);
             (void)nova_cap_unregister(&nova_app_policy,pid);
             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-            bool ok=nova_process_drop(&nova_processes,pid,
-                nova_process_page_release,nova_process_page_phys,NULL);
+            bool ok=nova_process_drop_guarded(&nova_processes,pid,
+                nova_process_page_phys,&nova_image_guard_ops,NULL);
             shell_result(ok?"IMAGE+STACK+TABLES RELEASED":"RELEASE FAILED");
         }
     }
