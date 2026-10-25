@@ -113,17 +113,30 @@ static inline const char *nova_process_result_name(enum nova_process_result resu
 static inline uint32_t nova_process_count(const struct nova_process_table *table){
     if(!table)return 0;
     uint32_t n=0;
-    for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++)
-        if(table->slots[i].staged)n++;
+    for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
+        const struct nova_process_image *image=&table->slots[i];
+        if(image->staged&&!image->rollback_pending&&
+           !image->owner_retirement_pending)n++;
+    }
     return n;
 }
-static inline struct nova_process_image *nova_process_find(
+/* Teardown may need to find a zero-page owner tombstone after all image
+ * frames have gone. Ordinary callers must not treat that tombstone as a live
+ * staged image. Keep this lookup private to lifecycle/cleanup paths. */
+static inline struct nova_process_image *nova_process_find_any(
         struct nova_process_table *table,uint32_t pid){
     if(!table||!pid)return NULL;
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++)
         if(table->slots[i].staged && table->slots[i].pid==pid)
             return &table->slots[i];
     return NULL;
+}
+static inline struct nova_process_image *nova_process_find(
+        struct nova_process_table *table,uint32_t pid){
+    struct nova_process_image *image=nova_process_find_any(table,pid);
+    if(!image||image->rollback_pending||image->owner_retirement_pending)
+        return NULL;
+    return image;
 }
 /* Pointer overlap is only a preliminary check. A trusted PMM-backed
  * physical-address callback is REQUIRED for staging and release. Distinct
@@ -308,7 +321,7 @@ static inline bool nova_process_drop_owned_guarded(
     nova_process_phys_fn physical,const struct nova_process_guard_ops *guard,
     nova_process_owner_retire_fn retire_owner,void *ctx){
     if(!table||!physical||!guard||!retire_owner)return false;
-    struct nova_process_image *image=nova_process_find(table,pid);
+    struct nova_process_image *image=nova_process_find_any(table,pid);
     if(!image||!image->staged||!image->guarded||!image->owner)return false;
     const uint64_t owner=image->owner;
     if(image->owner_retirement_pending){
