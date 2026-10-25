@@ -676,6 +676,7 @@ static void test_retryable_owner_retirement(void){
     struct nova_process_table table={0};
     uint32_t pid=0;
     assert(stage(&table,owner,&pid)==NOVA_PROCESS_OK);
+    assert(nova_process_count(&table)==1);
     struct nova_frame_ticket orphan={0};
     assert(nova_page_alloc_owned_ticket(NOVA_FRAME_GENERAL,owner,&orphan));
     assert(!nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
