@@ -18,7 +18,17 @@ static void expect(const struct nova_broker_context *ctx,uint32_t pid,
                    struct nova_broker_request *req,
                    struct nova_broker_response *out,enum nova_broker_status want){
     memset(out,0xCD,sizeof(*out));
-    assert(nova_broker_dispatch(ctx,pid,req,out)==want);
+    static unsigned test_case=0;
+    test_case++;
+    enum nova_broker_status actual=nova_broker_dispatch(ctx,pid,req,out);
+    if(actual!=want){
+        fprintf(stderr,"Broker test %u: op=%u pid=%u off=%llu len=%u path='%.*s' expected=%d actual=%d\n",
+            test_case,req?req->operation:0,pid,
+            (unsigned long long)(req?req->offset:0),req?req->length:0,
+            (int)NOVA_BROKER_PATH_CAP,req?req->path:"",
+            (int)want,(int)actual);
+    }
+    assert(actual==want);
     assert(out->status==want);
     if(want!=NOVA_BROKER_OK){
         assert(out->version==0&&out->length==0&&out->file_size==0);
