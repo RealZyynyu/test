@@ -1168,15 +1168,21 @@ static void shell_execute(void){
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
             size_t slot=nova_process_index(p);
-            /* Wipe private volatile save before revoking rights and memory. */
-            (void)nova_save_unregister(&nova_private_saves,pid);
-            (void)nova_cap_unregister(&nova_app_policy,pid);
-            nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-            const uint64_t owner=p->owner;
-            bool ok=nova_process_drop_guarded(&nova_processes,pid,
-                nova_process_page_phys,&nova_image_guard_ops,NULL);
-            if(ok)ok=nova_owner_retire(owner);
-            shell_result(ok?"IMAGE+STACK+TABLES RELEASED":"RELEASE FAILED");
+            /* Fail closed before revoking rights or freeing any frame. */
+            if(!nova_offline_drop_preflight(p,&nova_processes,
+                    &nova_user_spaces[slot],&nova_user_pt_ops,
+                    nova_process_page_phys,&nova_image_guard_ops,NULL))
+                shell_result("OFFLINE PROCESS OWNERSHIP INVALID");
+            else{
+                (void)nova_save_unregister(&nova_private_saves,pid);
+                (void)nova_cap_unregister(&nova_app_policy,pid);
+                nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
+                const uint64_t owner=p->owner;
+                bool ok=nova_process_drop_guarded(&nova_processes,pid,
+                    nova_process_page_phys,&nova_image_guard_ops,NULL);
+                if(ok)ok=nova_owner_retire(owner);
+                shell_result(ok?"IMAGE+STACK+TABLES RELEASED":"RELEASE FAILED");
+            }
         }
     }
     else if(nova_file_equal(shell_input,"CLEAR")){

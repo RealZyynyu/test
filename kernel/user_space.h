@@ -268,4 +268,37 @@ static inline bool nova_user_stack_guard_is_unmapped(
     }
     return true;
 }
+
+/* PDROP preflight: validate every owned frame and mapping before revoking
+ * permissions or releasing anything. This is OFFLINE only, not ring 3. */
+static inline bool nova_offline_drop_preflight(
+    const struct nova_process_image *image,
+    const struct nova_process_table *processes,
+    const struct nova_user_space *space,const struct nova_pt_ops *ops,
+    nova_process_phys_fn physical,
+    const struct nova_process_guard_ops *guard,void *context){
+    if(!image||!image->staged||!image->guarded||!image->owner||
+       !processes||!space||!space->prepared||!space->page_tables.prepared||
+       space->page_tables.owner!=image->owner||
+       image->page_count==0||image->page_count>NOVA_PROCESS_MAX_PAGES||
+       space->page_tables.protected_count!=image->page_count||
+       space->page_tables.mapped_pages!=
+           (uint32_t)image->page_count+NOVA_USER_STACK_PAGES||
+       !nova_process_frames_releasable_guarded(
+           image,processes,physical,context,guard)||
+       !nova_user_space_frames_releasable(space,ops)||
+       !nova_user_stack_guard_is_unmapped(space))return false;
+    for(uint16_t i=0;i<image->page_count;i++){
+        const struct nova_process_page *p=&image->pages[i];
+        uint64_t phys=0,rights=0;
+        const uint64_t expected=NOVA_PT_P|NOVA_PT_US|
+            ((p->flags&2u)?NOVA_PT_RW:0u)|
+            ((p->flags&1u)?0u:NOVA_PT_NX);
+        if(space->page_tables.protected_frames[i]!=p->frame||
+           space->page_tables.protected_physical[i]!=p->physical_page||
+           !nova_pt_lookup(&space->page_tables,p->virtual_page,&phys,&rights)||
+           phys!=p->physical_page||rights!=expected)return false;
+    }
+    return true;
+}
 #endif

@@ -444,6 +444,60 @@ static void test_stale_owned_stack_ticket(void){
     assert(nova_owner_retire(owner));
     assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
 }
+
+/* Corrupted cross-descriptor identity must block teardown without side effects. */
+static void test_offline_drop_preflight(void){
+    setup();stack_budget=UINT32_MAX;
+    uint64_t a=0,b=0;
+    assert(nova_owner_create(&a)&&nova_owner_create(&b));
+    struct nova_process_table table={0};
+    uint32_t pa=0,pb=0;
+    assert(stage(&table,a,&pa)==NOVA_PROCESS_OK);
+    assert(stage(&table,b,&pb)==NOVA_PROCESS_OK);
+    struct nova_process_image *ia=nova_process_find(&table,pa);
+    struct nova_process_image *ib=nova_process_find(&table,pb);
+    assert(ia&&ib);
+    struct nova_user_space sa={0},sb={0};
+    assert(nova_user_space_prepare(&sa,&ops,ia)==NOVA_PT_OK);
+    assert(nova_user_space_prepare(&sb,&ops,ib)==NOVA_PT_OK);
+    const uint32_t baseline=nova_pmm.in_use;
+    assert(nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                       legacy_phys,&guard,NULL));
+    sa.stack_generation[0]++;
+    assert(!nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                        legacy_phys,&guard,NULL));
+    sa.stack_generation[0]--;
+    sa.page_tables.protected_physical[0]^=NOVA_PT_PAGE_SIZE;
+    assert(!nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                        legacy_phys,&guard,NULL));
+    sa.page_tables.protected_physical[0]^=NOVA_PT_PAGE_SIZE;
+    sa.page_tables.owner=b;
+    assert(!nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                        legacy_phys,&guard,NULL));
+    sa.page_tables.owner=a;
+    sa.page_tables.mapped_entry[0]^=NOVA_PT_RW;
+    assert(!nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                        legacy_phys,&guard,NULL));
+    sa.page_tables.mapped_entry[0]^=NOVA_PT_RW;
+    ia->pages[0].generation++;
+    assert(!nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                        legacy_phys,&guard,NULL));
+    ia->pages[0].generation--;
+    assert(nova_pmm.in_use==baseline && ia->staged && sa.prepared);
+    assert(nova_offline_drop_preflight(ia,&table,&sa,&ops,
+                                       legacy_phys,&guard,NULL));
+    memset(sb.stack_frames[0],0xC7,4096);
+    nova_user_space_destroy(&sa,&ops);
+    assert(nova_process_drop_guarded(&table,pa,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(a));
+    intact(sb.stack_frames[0],0xC7);
+    assert(nova_offline_drop_preflight(ib,&table,&sb,&ops,
+                                       legacy_phys,&guard,NULL));
+    nova_user_space_destroy(&sb,&ops);
+    assert(nova_process_drop_guarded(&table,pb,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(b));
+    assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
+}
 int main(void){
     assert(strcmp(nova_elf_result_name(NOVA_ELF_OK),
                   "VALID STATIC ELF64 (NOT EXECUTED)")==0);
@@ -455,6 +509,7 @@ int main(void){
     test_owned_stack_lifecycle();
     test_owned_stack_rollback_and_forgery();
     test_stale_owned_stack_ticket();
+    test_offline_drop_preflight();
     puts("Owned offline ELF and page tables: owner isolation, rollback, forged and stale tickets OK.");
     return 0;
 }
