@@ -70,7 +70,7 @@ static bool read_elf_vfs(void *context,uint64_t offset,uint8_t *out,size_t lengt
     return nova_vfs_read(x->vfs,"DISK:/APP.ELF",(size_t)offset,out,length);
 }
 /* Synthetic physical-frame allocator for the end-to-end stage test. */
-static uint8_t staged_frames[4][4096];
+static _Alignas(4096) uint8_t staged_frames[4][4096];
 static bool staged_used[4];
 static unsigned staged_count=0;
 static void *stage_alloc(void *ctx){
