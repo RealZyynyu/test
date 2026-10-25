@@ -41,6 +41,7 @@ jobs:
           cp kernel/rtc.h _builder/kernel/src/rtc.h
           cp kernel/cpu.h _builder/kernel/src/cpu.h
           cp kernel/ata.h _builder/kernel/src/ata.h
+          cp kernel/fat16.h _builder/kernel/src/fat16.h
           cp limine.conf _builder/limine.conf
       - name: Build independent x86-64 kernel and ISO
         run: |
