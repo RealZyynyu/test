@@ -648,21 +648,45 @@ static enum nova_elf_result nova_elf_check_path(const char *path,
     return nova_elf64_probe(nova_elf_from_vfs,&reader,size,info);
 }
 
-/* These staged images are kernel-only data; no ring-3 program execution. */
+/* Staged images, offline page tables and stacks are kernel-only data.
+ * The global PMM role ledger prevents cross-class release or reinterpretation.
+ * No ring-3 program execution or hardware isolation is implemented. */
 static void *nova_process_page_allocate(void *ctx){
-    (void)ctx;return nova_page_alloc();
+    (void)ctx;return nova_page_alloc_role(NOVA_FRAME_IMAGE);
 }
 static void nova_process_page_release(void *ctx,void *page){
-    (void)ctx;(void)nova_page_free(page);
+    (void)ctx;(void)nova_page_free_role(page,NOVA_FRAME_IMAGE);
 }
 static bool nova_process_page_phys(void *ctx,const void *page,uint64_t *out){
-    (void)ctx;return nova_pmm_physical(page,out);
+    (void)ctx;return nova_pmm_physical_role(page,NOVA_FRAME_IMAGE,out);
+}
+static void *nova_table_page_allocate(void *ctx){
+    (void)ctx;return nova_page_alloc_role(NOVA_FRAME_PAGE_TABLE);
+}
+static void nova_table_page_release(void *ctx,void *page){
+    (void)ctx;(void)nova_page_free_role(page,NOVA_FRAME_PAGE_TABLE);
+}
+static bool nova_table_page_phys(void *ctx,const void *page,uint64_t *out){
+    (void)ctx;return nova_pmm_physical_role(page,NOVA_FRAME_PAGE_TABLE,out);
+}
+static void *nova_stack_page_allocate(void *ctx){
+    (void)ctx;return nova_page_alloc_role(NOVA_FRAME_STACK);
+}
+static void nova_stack_page_release(void *ctx,void *page){
+    (void)ctx;(void)nova_page_free_role(page,NOVA_FRAME_STACK);
+}
+static bool nova_stack_page_phys(void *ctx,const void *page,uint64_t *out){
+    (void)ctx;return nova_pmm_physical_role(page,NOVA_FRAME_STACK,out);
 }
 static const struct nova_pt_ops nova_user_pt_ops={
     .context=NULL,
-    .allocate=nova_process_page_allocate,
-    .release=nova_process_page_release,
-    .physical_address=nova_process_page_phys
+    .allocate=nova_table_page_allocate,
+    .release=nova_table_page_release,
+    .physical_address=nova_process_page_phys,
+    .table_physical_address=nova_table_page_phys,
+    .stack_allocate=nova_stack_page_allocate,
+    .stack_release=nova_stack_page_release,
+    .stack_physical_address=nova_stack_page_phys
 };
 static size_t nova_process_index(const struct nova_process_image *image){
     return (size_t)(image-&nova_processes.slots[0]);
