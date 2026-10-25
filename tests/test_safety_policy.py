@@ -75,6 +75,27 @@ class TestNativeSafetyDefaults(unittest.TestCase):
         self.assertNotIn("nova_cap_grant_trusted(", main)
         self.assertNotIn("NOVA_CAP_DISK_WRITE", caps)
 
+    def test_offline_broker_stays_bounded_and_requires_trusted_identity(self):
+        broker = self.text("kernel/broker.h")
+        buffers = self.text("kernel/user_buffer.h")
+        app = self.text("kernel/main.c")
+        self.assertIn("#define NOVA_BROKER_MAX_BYTES 64u", broker)
+        self.assertIn("#define NOVA_BROKER_PATH_CAP 32u", broker)
+        self.assertIn("trusted_pid", broker)
+        self.assertIn("nova_cap_path_check", broker)
+        self.assertIn("nova_cap_read_file", broker)
+        self.assertIn("nova_cap_write_ram", broker)
+        self.assertIn("NOVA_BROKER_INVALID_REQUEST", broker)
+        self.assertIn("NOVA_USER_BUFFER_MAX", buffers)
+        self.assertIn("nova_pt_lookup", buffers)
+        self.assertIn("nova_user_span_accessible", app)
+        self.assertIn("nova_broker_dispatch", app)
+        # No hardware entry or untrusted pointers in the request structure.
+        request = broker.split("struct nova_broker_request {", 1)[1].split("};", 1)[0]
+        self.assertNotIn("*", request)
+        self.assertNotIn("pid", request.lower())
+        self.assertNotIn("__asm__", broker)
+
     def test_game_controls_are_a_nonprivileged_adapter(self):
         controls = self.text("kernel/game_input.h")
         self.assertIn("NOVA_GAME_CONTROLLER", controls)
