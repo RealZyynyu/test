@@ -82,6 +82,10 @@ fehlschlägt, der Tombstone erhalten bleibt, der fremde Frame unberührt bleibt 
 ein späterer `PDROP`-Versuch nach Freigabe des Orphan-Frames den Eigentümer und
 Prozessslot korrekt entfernt.
 
+## Noch offener Fehlerpfad: fehlgeschlagener PSTAGE-Rollback
+
+Die hier ergänzte Tombstone-Logik deckt die Freigabe nach erfolgreicher Image-Staging-Phase ab. Ein separater Randfall bleibt offen: Wenn bereits während `nova_process_stage_impl()` ein Fehler auftritt und dessen eigener Freigabe-Callback ebenfalls fehlschlägt, ignoriert der aktuelle Staging-Code den Rückgabewert des Rollbacks. Dann kann ein `staged=false`-Deskriptor mit verbleibenden Tickets zurückbleiben und später von einer neuen Staging-Anfrage als freier Slot angesehen werden. Das ist **nicht** durch den neuen Owner-Tombstone behoben und muss vor einer Finalprüfung separat korrigiert und mit Callback-Fehlerinjektion getestet werden.
+
 ## Verbleibende Grenzen
 
 Ein Callback muss garantieren, dass `false` bedeutet: der aktuelle Frame
