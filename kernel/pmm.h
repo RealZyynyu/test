@@ -117,7 +117,8 @@ static bool nova_pmm_self_test(void){
     uint64_t *a=(uint64_t*)nova_page_alloc();
     uint64_t *b=(uint64_t*)nova_page_alloc();
     if(!a || !b || a==b){
-        if(a)nova_page_free(a);if(b)nova_page_free(b);
+        if(a)nova_page_free(a);
+        if(b)nova_page_free(b);
         return false;
     }
     bool zero=(*a==0 && *b==0);
