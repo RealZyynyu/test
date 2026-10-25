@@ -89,6 +89,7 @@ static void test_cross_role_and_legacy_allocation(void){
     unchanged(legacy,0x51);
     assert(nova_page_free_role(legacy,NOVA_FRAME_IMAGE));
     assert(nova_pmm_metadata_valid());
+    assert(nova_pmm_self_test()); /* legacy PMM self-test remains usable */
 }
 static void test_corruption_and_generation_exhaustion(void){
     setup();
