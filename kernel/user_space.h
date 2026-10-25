@@ -26,6 +26,7 @@
 struct nova_user_space {
     struct nova_page_table page_tables;
     void *stack_frames[NOVA_USER_STACK_PAGES];
+    uint64_t stack_physical[NOVA_USER_STACK_PAGES];
     uint32_t stack_count;
     uint64_t stack_top;
     uint64_t initial_rsp;
@@ -73,40 +74,57 @@ static inline enum nova_pt_result nova_user_space_prepare(
     for(uint32_t i=0;i<NOVA_USER_STACK_PAGES;i++){
         void *frame=ops->allocate(ops->context);
         if(!frame){result=NOVA_PT_OUT_OF_MEMORY;goto rollback;}
-        space->stack_frames[space->stack_count++]=frame;
+        /* Do NOT register or free a suspect frame before checking it.
+         * A broken allocator may return an image frame, an existing table,
+         * or a previously accepted stack page. Releasing such a frame on
+         * rollback would double-free someone else's allocation. */
+        for(uint16_t j=0;j<space->page_tables.protected_count;j++)
+            if(space->page_tables.protected_frames[j]==frame){
+                result=NOVA_PT_BAD_FRAME;goto rollback;
+            }
+        for(uint16_t j=0;j<space->page_tables.tables_used;j++)
+            if(space->page_tables.tables[j]==frame){
+                result=NOVA_PT_BAD_FRAME;goto rollback;
+            }
+        for(uint32_t j=0;j<space->stack_count;j++)
+            if(space->stack_frames[j]==frame){
+                result=NOVA_PT_BAD_FRAME;goto rollback;
+            }
         uint64_t phys=0;
         if(!ops->physical_address(ops->context,frame,&phys) ||
-           !nova_pt_valid_phys(phys)){
+           !nova_pt_valid_phys(phys) ||
+           ((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0){
+            /* Unknown ownership: do not free an unverified frame. */
             result=NOVA_PT_BAD_FRAME;goto rollback;
         }
-        /* Refuse aliasing with process data or page-table frames. */
-        for(uint32_t j=0;j<image->page_count;j++){
-            uint64_t data_phys=0;
-            if(image->pages[j].frame==frame ||
-               !ops->physical_address(ops->context,image->pages[j].frame,&data_phys) ||
-               data_phys==phys){
+        for(uint16_t j=0;j<space->page_tables.protected_count;j++)
+            if(space->page_tables.protected_physical[j]==phys){
                 result=NOVA_PT_BAD_FRAME;goto rollback;
             }
-        }
-        for(uint16_t j=0;j<space->page_tables.tables_used;j++){
-            if(space->page_tables.tables[j]==frame ||
-               space->page_tables.table_physical[j]==phys){
+        for(uint16_t j=0;j<space->page_tables.tables_used;j++)
+            if(space->page_tables.table_physical[j]==phys){
                 result=NOVA_PT_BAD_FRAME;goto rollback;
             }
-        }
-        for(uint32_t j=0;j<i;j++){
-            uint64_t prev=0;
-            if(space->stack_frames[j]==frame ||
-               !ops->physical_address(ops->context,space->stack_frames[j],&prev) ||
-               prev==phys){
+        for(uint32_t j=0;j<space->stack_count;j++)
+            if(space->stack_physical[j]==phys){
                 result=NOVA_PT_BAD_FRAME;goto rollback;
             }
-        }
+        /* Only a validated, non-aliased frame becomes our responsibility.
+         * The cached physical identity avoids re-querying mutable callbacks. */
+        space->stack_frames[space->stack_count]=frame;
+        space->stack_physical[space->stack_count]=phys;
+        space->stack_count++;
         uint8_t *bytes=(uint8_t*)frame;
         for(uint32_t off=0;off<NOVA_PT_PAGE_SIZE;off++)bytes[off]=0;
         uint64_t va=NOVA_USER_STACK_TOP-
                  (uint64_t)(NOVA_USER_STACK_PAGES-i)*NOVA_PT_PAGE_SIZE;
+        /* Mapping may allocate a new PT. Reserve the current stack frame
+         * first so a faulty allocator cannot hand it back as a table. */
+        space->page_tables.pending_leaf_frame=frame;
+        space->page_tables.pending_leaf_physical=phys;
         result=nova_pt_map_one(&space->page_tables,ops,va,phys,6u); /* RW,NX */
+        space->page_tables.pending_leaf_frame=NULL;
+        space->page_tables.pending_leaf_physical=0;
         if(result!=NOVA_PT_OK)goto rollback;
     }
     /* One intentionally unmapped page, immediately below the RW stack. */
