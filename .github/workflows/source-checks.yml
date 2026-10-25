@@ -61,6 +61,17 @@ jobs:
             -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_frame_roles.c -o /tmp/nova-frame-roles-sanitized
           /tmp/nova-frame-roles-sanitized
+      - name: Test generation tickets and stale-frame rejection with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs tests/test_frame_tickets.c -o /tmp/nova-frame-tickets
+          /tmp/nova-frame-tickets
+      - name: Test generation tickets with Clang ASan and UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_frame_tickets.c -o /tmp/nova-frame-tickets-sanitized
+          /tmp/nova-frame-tickets-sanitized
   safety-policy:
     name: Safety policy checks (no ISO)
     runs-on: ubuntu-24.04
