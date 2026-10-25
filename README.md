@@ -58,6 +58,7 @@ disk filesystem.
 - `kernel/fat16.h` — independent bounded FAT16 parser and file reader
 - `kernel/ramfs.h` — RAM-only files
 - `kernel/vfs.h` — explicit RAM:/ and read-only DISK:/ storage namespace
+- `kernel/elf64.h` — validated ELF64 executable metadata (never executes)
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -103,6 +104,38 @@ This is not a full production VFS: there are no directories, file
 descriptors, permissions, symbolic links, writeable disk filesystem,
 transaction recovery or concurrent multi-process operations. FAT16 integration
 inside a running QEMU guest remains to be tested before a final release.
+
+## ELF64 application groundwork (source-only)
+
+NOVA now includes `kernel/elf64.h`: a **non-executing ELF64 validator**.
+It uses bounded read callbacks that can read a binary from `RAM:/` or
+the strictly read-only `DISK:/` FAT16 VFS.
+
+Developer shell commands (not available in the already released ISO):
+
+```text
+ELFCHK DISK:/APP.ELF
+ELFPAGES DISK:/APP.ELF
+```
+
+- Accepts only little-endian x86-64 **static ET_EXEC** ELF64.
+- Limits load segments, header count and memory pages.
+- Checks canonical user-space address bounds, file bounds, entry point,
+  section alignment, page overlaps and readable binary segments.
+- Refuses executable writable segments (W+X), executable stacks,
+  dynamic linking, TLS, unsupported architecture and malformed files.
+- Returns validation status / estimated number of pages. It **never
+  loads, maps, starts, or executes programs**.
+- Host tests use synthetic ELF files with intentional malformed data.
+  A second suite reads a synthetic ELF file from a FAT16 disk image
+  through the VFS. GCC/Clang sanitizer checks and freestanding kernel
+  compilation run in GitHub Actions without creating an ISO.
+
+**This is not yet user-mode process support.** Remaining milestones include
+real per-process page tables, ELF segment mapping, user/kernel privilege
+separation, protected system calls, a correct scheduler and an application
+runtime. Passing the ELF header tests is not evidence the OS can execute
+third-party apps or Windows binaries.
 
 ## Important missing features / final-release blockers
 
