@@ -1012,9 +1012,8 @@ static void mouse_click(int x,int y){
 }
 static void keyboard_scancode(uint8_t key){
     enum nova_game_action game_event=nova_game_scan(&nova_game_keys,key);
-    static bool extended=false;
-    if(key==0xE0){extended=true;return;}
-    if(key&0x80){extended=false;return;}
+    if(key==0xE0 || key==0xE1)return;
+    if(key&0x80)return;
     int changed=0;
     if(key==0x01){open_app(0);changed=1;}
     if(screen!=2 && screen!=6 && key>=0x02 && key<=0x08){
@@ -1050,7 +1049,6 @@ static void keyboard_scancode(uint8_t key){
             if(prev!=player)changed=1;
         }
     }
-    extended=false;
     if(changed)redraw();
 }
 /* Executed through the x86-64 interrupt stub with interrupts disabled.
