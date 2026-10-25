@@ -74,6 +74,14 @@ class TestNativeSafetyDefaults(unittest.TestCase):
         self.assertIn("nova_cap_unregister(&nova_app_policy,pid)", main)
         self.assertNotIn("nova_cap_grant_trusted(", main)
         self.assertNotIn("NOVA_CAP_DISK_WRITE", caps)
+        saves = self.text("kernel/app_storage.h")
+        self.assertIn("NOVA_CAP_APP_SAVE", caps)
+        self.assertIn("nova_cap_check(registry,processes,trusted_pid,NOVA_CAP_APP_SAVE)", saves)
+        self.assertIn("nova_save_find", saves)
+        self.assertIn("nova_save_unregister", main)
+        self.assertIn("nova_save_register", main)
+        self.assertIn("nova_broker_dispatch", main)
+        self.assertIn("NOVA_BROKER_SAVE_WRITE", self.text("kernel/broker.h"))
 
     def test_offline_broker_stays_bounded_and_requires_trusted_identity(self):
         broker = self.text("kernel/broker.h")
