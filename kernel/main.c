@@ -1190,10 +1190,11 @@ static void shell_execute(void){
         struct nova_process_image *p=nova_process_find(&nova_processes,pid);
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
-            const bool owner_pending=p->owner_retirement_pending;
-            if(nova_drop_staged_process(pid))
+            bool ok=nova_drop_staged_process(pid);
+            struct nova_process_image *remaining=nova_process_find(&nova_processes,pid);
+            if(ok)
                 shell_result("IMAGE+STACK+TABLES+OWNER RELEASED");
-            else if(owner_pending)
+            else if(remaining&&remaining->owner_retirement_pending)
                 shell_result("OWNER RETIRE FAILED; RESOLVE ORPHAN FRAMES THEN RETRY PDROP");
             else
                 shell_result("PDROP BLOCKED; CHECK OWNERSHIP OR RETRY");
