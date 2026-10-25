@@ -576,6 +576,126 @@ static void test_offline_pte_integrity(void){
     assert(active==0);
 }
 
+/* Destruction is a security boundary too: damaged metadata must not
+ * cause an out-of-bounds walk, double free, or release of an ELF frame.
+ * Save the valid descriptor and restore it after each rejected teardown
+ * to reclaim the deliberately leaked host-test pages at the end.
+ */
+static void test_corrupt_teardown_metadata(void){
+    image_fixture();
+    struct nova_process_table processes={0};
+    uint32_t pid=stage(&processes);
+    struct nova_process_image *img=nova_process_find(&processes,pid);
+    assert(img && active==3);
+    struct nova_page_table tree={0};
+    assert(nova_pt_prepare(&tree,&ops,img)==NOVA_PT_OK);
+    struct nova_page_table original=tree;
+    uint32_t baseline=active;
+    assert(nova_pt_tables_releasable(&tree,&ops));
+
+    tree.tables_used=UINT16_MAX;
+    assert(!nova_pt_tables_releasable(&tree,&ops));
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline && tree.tables_used==0);
+    tree=original;
+
+    tree.protected_count=UINT16_MAX;
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline);
+    tree=original;
+
+    tree.mapped_pages=UINT16_MAX;
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline);
+    tree=original;
+
+    tree.tables[1]=tree.tables[0];
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline);
+    tree=original;
+
+    tree.table_physical[1]=tree.table_physical[0];
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline);
+    tree=original;
+
+    tree.tables[1]=img->pages[0].frame;
+    tree.table_physical[1]=original.mapped_physical[0];
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline && physical(NULL,img->pages[0].frame,
+                                         &tree.root_physical));
+    tree=original;
+
+    tree.root_physical^=NOVA_PT_PAGE_SIZE;
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline);
+    tree=original;
+
+    tree.pending_leaf_frame=img->pages[0].frame;
+    nova_pt_destroy(&tree,&ops);
+    assert(active==baseline);
+    tree=original;
+
+    struct nova_pt_ops missing_physical=ops;
+    missing_physical.physical_address=NULL;
+    nova_pt_destroy(&tree,&missing_physical);
+    assert(active==baseline);
+    tree=original;
+
+    assert(nova_pt_tables_releasable(&tree,&ops));
+    nova_pt_destroy(&tree,&ops);
+    assert(active==3);
+
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_OK);
+    struct nova_user_space saved=space;
+    baseline=active;
+    assert(nova_user_space_frames_releasable(&space,&ops));
+
+    space.stack_count=UINT32_MAX;
+    assert(!nova_user_space_frames_releasable(&space,&ops));
+    nova_user_space_destroy(&space,&ops);
+    assert(active==baseline && space.stack_count==0);
+    space=saved;
+
+    space.stack_frames[1]=space.stack_frames[0];
+    nova_user_space_destroy(&space,&ops);
+    assert(active==baseline);
+    space=saved;
+
+    space.stack_physical[1]=space.stack_physical[0];
+    nova_user_space_destroy(&space,&ops);
+    assert(active==baseline);
+    space=saved;
+
+    space.stack_frames[1]=img->pages[0].frame;
+    space.stack_physical[1]=saved.page_tables.protected_physical[0];
+    nova_user_space_destroy(&space,&ops);
+    assert(active==baseline);
+    space=saved;
+
+    space.stack_frames[1]=space.page_tables.tables[0];
+    space.stack_physical[1]=space.page_tables.table_physical[0];
+    nova_user_space_destroy(&space,&ops);
+    assert(active==baseline);
+    space=saved;
+
+    space.page_tables.tables_used=UINT16_MAX;
+    nova_user_space_destroy(&space,&ops);
+    assert(active==baseline);
+    space=saved;
+
+    nova_user_space_destroy(&space,&missing_physical);
+    assert(active==baseline);
+    space=saved;
+
+    assert(nova_user_space_frames_releasable(&space,&ops));
+    nova_user_space_destroy(&space,&ops);
+    assert(active==3);
+    assert(nova_process_drop(&processes,pid,release,NULL));
+    assert(active==0);
+}
+
 int main(void){
     test_page_tables();
     test_isolated_roots();
@@ -586,6 +706,7 @@ int main(void){
     test_distinct_stack_frames();
     test_stack_allocator_ownership();
     test_offline_pte_integrity();
+    test_corrupt_teardown_metadata();
     assert(active==0);
     puts("Offline paging: PML4, guarded user stacks, W^X/NX, rollback, separate roots; no CR3 use.");
     return 0;
