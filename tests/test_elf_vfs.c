@@ -177,6 +177,29 @@ int main(void){
     assert(nova_process_drop(&table,pid,stage_free,NULL));
     assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_RAM_READ));
     assert(staged_count==0 && nova_process_count(&table)==0);
+    /* A stale policy slot must not grant rights after process teardown or
+       accidentally transfer rights to the next monotonically numbered PID. */
+    uint32_t stale=0;
+    assert(nova_process_stage(&table,"DISK:/APP.ELF",
+        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,NULL,&stale)==NOVA_PROCESS_OK);
+    assert(stale!=pid);
+    assert(nova_cap_register(&policy,&table,stale));
+    assert(nova_cap_grant_trusted(&policy,&table,stale,NOVA_CAP_RAM_READ));
+    assert(nova_process_drop(&table,stale,stage_free,NULL));
+    assert(!nova_cap_check(&policy,&table,stale,NOVA_CAP_RAM_READ));
+    assert(!nova_cap_grant_trusted(&policy,&table,stale,NOVA_CAP_DISK_READ));
+    assert(nova_cap_unregister(&policy,stale));
+    uint32_t fresh=0;
+    assert(nova_process_stage(&table,"DISK:/APP.ELF",
+        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,NULL,&fresh)==NOVA_PROCESS_OK);
+    assert(fresh!=stale && fresh!=pid);
+    assert(nova_cap_register(&policy,&table,fresh));
+    assert(nova_cap_current(&policy,&table,fresh)==0);
+    assert(!nova_cap_read_file(&policy,&table,fresh,&vfs,
+                               "DISK:/APP.ELF",0,fetched,4));
+    assert(nova_cap_unregister(&policy,fresh));
+    assert(nova_process_drop(&table,fresh,stage_free,NULL));
+    assert(staged_count==0);
     /* File metadata can be located, but disk modification remains forbidden. */
     uint8_t *second_ph=elf_byte(120);
     uint32_t old_flags=nova_elf_u32(second_ph+4);
