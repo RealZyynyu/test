@@ -680,9 +680,11 @@ static void test_retryable_owner_retirement(void){
     assert(nova_page_alloc_owned_ticket(NOVA_FRAME_GENERAL,owner,&orphan));
     assert(!nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
                                             retire_owner_for_test,NULL));
-    struct nova_process_image *image=nova_process_find(&table,pid);
+    struct nova_process_image *image=nova_process_find_any(&table,pid);
     assert(image&&image->owner_retirement_pending&&image->owner==owner);
     assert(image->staged&&image->guarded&&image->page_count==0);
+    assert(nova_process_find(&table,pid)==NULL);
+    assert(nova_process_count(&table)==0);
     assert(nova_pmm_ticket_valid(&orphan));
     assert(!nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
     assert(!nova_process_frames_releasable_guarded(
@@ -702,7 +704,8 @@ static void test_retryable_owner_retirement(void){
     assert(nova_page_free_ticket(&orphan));
     assert(nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
                                            retire_owner_for_test,NULL));
-    assert(nova_process_find(&table,pid)==NULL);
+    assert(nova_process_find_any(&table,pid)==NULL);
+    assert(nova_process_count(&table)==0);
     assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
 }
 
