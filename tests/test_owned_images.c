@@ -37,6 +37,7 @@ static void setup(void){
     assert((uintptr_t)ram>=0x200000u);
     hhdm.offset=(uint64_t)((uintptr_t)ram-0x200000u);
     assert(nova_pmm_init(&map,&hhdm));
+    assert(nova_pmm_self_test());
     memset(elf,0,sizeof(elf));
     elf[0]=0x7f;elf[1]='E';elf[2]='L';elf[3]='F';
     elf[4]=2;elf[5]=1;elf[6]=1;
@@ -180,6 +181,8 @@ static void test_stale_owned_ticket(void){
     assert(nova_page_free_ticket(&replacement));
 }
 int main(void){
+    assert(strcmp(nova_elf_result_name(NOVA_ELF_OK),
+                  "VALID STATIC ELF64 (NOT EXECUTED)")==0);
     test_separation_and_offline_preflight();
     test_failure_rollback();
     test_stale_owned_ticket();

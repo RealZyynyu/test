@@ -222,7 +222,8 @@ static inline bool nova_process_release_image_impl(
     const struct nova_process_guard_ops *guard){
     if(!image)return false;
     bool safe=(image->guarded ?
-        (guard && (image->owner ? guard->release_owned : guard->release)) :
+        (guard && (image->owner ? guard->release_owned!=NULL :
+                                  guard->release!=NULL)) :
         (image->owner==0 && free_page!=NULL)) &&
         nova_process_frames_releasable_guarded(image,table,physical,ctx,guard);
     if(safe){
