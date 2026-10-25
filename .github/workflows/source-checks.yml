@@ -19,6 +19,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Assert read-only disk, offline process staging and manual ISO release
         run: python3 tests/test_safety_policy.py
+  broker:
+    name: Bounded kernel broker ABI and permissions (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify fixed-buffer request handling with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_broker.c -o /tmp/nova-test-broker
+          /tmp/nova-test-broker
+      - name: Validate denial paths with Clang sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_broker.c -o /tmp/nova-test-broker-sanitized
+          /tmp/nova-test-broker-sanitized
   game-controls:
     name: Arcade/game-input tests (no ISO)
     runs-on: ubuntu-24.04
