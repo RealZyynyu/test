@@ -86,6 +86,7 @@ disk filesystem.
 - `kernel/process_image.h` — staged image frames, cleanup and resource limits
 - `kernel/paging.h` — offline PML4 user-page mapping constructor (never CR3)
 - `kernel/user_space.h` — planned RW/NX user stack, guard page and cleanup
+- `kernel/capabilities.h` — staged-app default-deny file-access policy
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -255,6 +256,24 @@ stack access, exception recovery, or program execution is implemented.
 Thus the guard page is not yet an *enforced* protection boundary in a
 running user process. The ISO remains a manually approved final-only
 artifact; no new ISO was created for this source change.
+
+## Experimental application permission model (default deny)
+
+The current source code includes a **preparatory** permission policy for
+staged app images (`kernel/capabilities.h`). New images have **zero rights**
+and `PACCESS <PID>` reports the assigned rights bitmask. `PDROP` unregisters
+rights before freeing an image. A kernel-controlled path can explicitly
+grant and revoke **RAM read, RAM write or FAT16 disk read**, but **disk write
+is never permitted**, protected RAM examples are not app-writable, and
+network/microphone/controller permissions are disabled until real
+drivers exist. There is intentionally no command to grant permissions
+from the Terminal. Source tests cover default deny, revoked grants,
+protected files and obsolete PIDs.
+
+**This is not currently a sandbox or runtime security boundary.**
+Kernel-mode code can still bypass the policy, and there is no Ring-3
+process execution, syscall broker, per-app private storage, or
+real permission prompt. See the [app permission architecture and tests](docs/app-permissions.md) for precise implementation status and next steps.
 
 ## Important missing features / final-release blockers
 
