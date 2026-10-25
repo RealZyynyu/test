@@ -33,7 +33,9 @@ jobs:
       - name: Assemble exception entry stubs without producing an ISO
         run: |
           clang -c -x assembler kernel/irq.S -o /tmp/nova-irq.o
-          nm /tmp/nova-irq.o | grep -q ' nova_exception_31
+          nm /tmp/nova-irq.o | grep -q ' nova_exception_31$'
+  pmm:
+    name: Physical memory allocator hardening (no ISO)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
