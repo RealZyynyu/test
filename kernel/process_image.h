@@ -112,7 +112,7 @@ static inline bool nova_process_frames_releasable(
     if(!image||image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
     for(uint32_t i=0;i<image->page_count;i++){
         const void *frame=image->pages[i].frame;
-        if(!frame)return false;
+        if(!frame||((uintptr_t)frame&4095u)!=0)return false;
         for(uint32_t j=0;j<i;j++)
             if(nova_process_frame_overlaps(frame,image->pages[j].frame))
                 return false;
@@ -160,7 +160,8 @@ static inline bool nova_process_drop(struct nova_process_table *table,
 static inline bool nova_process_frame_available(
     const struct nova_process_table *table,
     const struct nova_process_image *current,const void *frame){
-    if(!frame||!table||!current)return false;
+    if(!frame||!table||!current||((uintptr_t)frame&4095u)!=0)
+        return false;
     if(current->page_count>NOVA_PROCESS_MAX_PAGES)return false;
     for(uint32_t j=0;j<current->page_count;j++)
         if(!current->pages[j].frame ||
