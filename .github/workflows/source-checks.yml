@@ -10,6 +10,31 @@ on:
 permissions:
   contents: read
 jobs:
+  native-kernel:
+    name: Compile native kernel only (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install freestanding build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm make git python3-pil fonts-inter
+      - name: Generate font assets
+        run: python3 tools/generate_font.py
+      - name: Get upstream freestanding headers
+        run: |
+          git clone --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git _kernel_builder
+          cd _kernel_builder
+          ./kernel/get-deps
+      - name: Copy native NOVA kernel source
+        run: |
+          cp kernel/main.c kernel/*.h kernel/irq.S _kernel_builder/kernel/src/
+      - name: Compile and link kernel ELF, without constructing an ISO
+        run: |
+          make -C _kernel_builder/kernel TOOLCHAIN=llvm all
+          test -s _kernel_builder/kernel/bin/kernel
+          test ! -f _kernel_builder/template.iso
+          echo "Native NOVA kernel compiled and linked. No ISO was generated."
   fat16:
     name: Read-only FAT16 host tests
     runs-on: ubuntu-24.04
