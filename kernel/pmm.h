@@ -13,6 +13,7 @@
 #define NOVA_PAGE_SIZE 4096ull
 #define NOVA_PAGE_POOL_CAP 2048u
 #define NOVA_BITMAP_SIZE ((NOVA_PAGE_POOL_CAP + 7u) / 8u)
+#define NOVA_OWNER_SLOT_CAP 64u
 /* Global allocation ROLE, not a process identity or cryptographic ownership
  * proof. Roles prevent an image frame from being freed as a page table/stack.
  * All operations remain single-core and non-reentrant. */
@@ -39,12 +40,20 @@ struct nova_page_manager {
     /* 0 denotes legacy kernel allocations; nonzero IDs are supplied by a
      * trusted caller and bound to an allocation ticket, NOT to a PID yet. */
     uint64_t owners[NOVA_PAGE_POOL_CAP];
+    uint64_t owner_registry[NOVA_OWNER_SLOT_CAP]; /* active trusted IDs */
+    uint64_t next_owner; /* monotonic; retired IDs never reused */
     uint64_t next_generation;
     bool initialized;
 };
 static struct nova_page_manager nova_pmm;
 static uint64_t nova_align_up(uint64_t value,uint64_t align){
     return (value+(align-1))&~(align-1);
+}
+static bool nova_pmm_owner_active(uint64_t owner){
+    if(!owner)return false;
+    for(uint32_t i=0;i<NOVA_OWNER_SLOT_CAP;i++)
+        if(nova_pmm.owner_registry[i]==owner)return true;
+    return false;
 }
 /* Reject damaged PMM bookkeeping BEFORE indexing the bitmap, wiping a
  * frame, or returning a physical address. This is a single-core consistency
@@ -53,7 +62,8 @@ static uint64_t nova_align_up(uint64_t value,uint64_t align){
  * is preferable to acting on inconsistent allocation metadata.
  */
 static bool nova_pmm_metadata_valid(void){
-    if(!nova_pmm.initialized || nova_pmm.next_generation==0 || nova_pmm.pages<8u ||
+    if(!nova_pmm.initialized || nova_pmm.next_generation==0 ||
+       nova_pmm.next_owner==0 || nova_pmm.pages<8u ||
        nova_pmm.pages>NOVA_PAGE_POOL_CAP ||
        nova_pmm.in_use>nova_pmm.pages ||
        (nova_pmm.phys_base&(NOVA_PAGE_SIZE-1u))!=0 ||
@@ -79,6 +89,14 @@ static bool nova_pmm_metadata_valid(void){
         for(unsigned bit=0;bit<8;bit++)
             counted+=(uint32_t)((bits>>bit)&1u);
     }
+    /* Reject duplicate, future or otherwise invalid active IDs. */
+    for(uint32_t i=0;i<NOVA_OWNER_SLOT_CAP;i++){
+        const uint64_t id=nova_pmm.owner_registry[i];
+        if(!id)continue;
+        if(id>=nova_pmm.next_owner)return false;
+        for(uint32_t j=0;j<i;j++)
+            if(nova_pmm.owner_registry[j]==id)return false;
+    }
     /* Bitmap and role ledger must agree, including every unused slot.
      * A role mismatch fails closed before any page can be overwritten. */
     for(uint32_t i=0;i<NOVA_PAGE_POOL_CAP;i++){
@@ -89,7 +107,8 @@ static bool nova_pmm_metadata_valid(void){
         const uint64_t owner=nova_pmm.owners[i];
         if(occupied){
             if(role<NOVA_FRAME_GENERAL || role>NOVA_FRAME_STACK ||
-               generation==0 || generation>=nova_pmm.next_generation)
+               generation==0 || generation>=nova_pmm.next_generation ||
+               (owner!=0 && !nova_pmm_owner_active(owner)))
                 return false;
         }else if(role!=NOVA_FRAME_FREE || generation!=0 || owner!=0)
             return false;
@@ -133,12 +152,41 @@ static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
         nova_pmm.generations[i]=0;
         nova_pmm.owners[i]=0;
     }
+    for(size_t i=0;i<NOVA_OWNER_SLOT_CAP;i++)nova_pmm.owner_registry[i]=0;
+    nova_pmm.next_owner=1;
     nova_pmm.next_generation=1;
     nova_pmm.phys_base=base;
     nova_pmm.hhdm_offset=(uintptr_t)offset;
     nova_pmm.pages=pages;
     nova_pmm.in_use=0;
     nova_pmm.initialized=true;
+    return true;
+}
+/* Trusted-kernel owner lifecycle only. IDs are not authenticated PIDs. */
+static bool nova_owner_create(uint64_t *out){
+    if(!out)return false;
+    *out=0;
+    if(!nova_pmm_metadata_valid() || nova_pmm.next_owner==UINT64_MAX)
+        return false;
+    for(uint32_t i=0;i<NOVA_OWNER_SLOT_CAP;i++){
+        if(nova_pmm.owner_registry[i])continue;
+        const uint64_t id=nova_pmm.next_owner++;
+        nova_pmm.owner_registry[i]=id;
+        *out=id;
+        return true;
+    }
+    return false;
+}
+/* Never retire an owner with any outstanding frame allocation. */
+static bool nova_owner_retire(uint64_t owner){
+    if(!owner || !nova_pmm_metadata_valid())return false;
+    uint32_t slot=NOVA_OWNER_SLOT_CAP;
+    for(uint32_t i=0;i<NOVA_OWNER_SLOT_CAP;i++)
+        if(nova_pmm.owner_registry[i]==owner){slot=i;break;}
+    if(slot==NOVA_OWNER_SLOT_CAP)return false;
+    for(uint32_t i=0;i<nova_pmm.pages;i++)
+        if(nova_pmm.owners[i]==owner)return false;
+    nova_pmm.owner_registry[slot]=0;
     return true;
 }
 /* Typed allocations use the same PMM bitmap, so roles are globally
@@ -283,13 +331,14 @@ static inline bool nova_page_alloc_ticket(enum nova_frame_role role,
     };
     return true;
 }
-/* Owner IDs must be nonzero and come from trusted kernel lifecycle code.
- * This additive API does not invent or register real process identities. */
+/* Owner IDs must be active IDs from nova_owner_create(). This does not
+ * authenticate callers or establish a real process identity. */
 static inline bool nova_page_alloc_owned_ticket(enum nova_frame_role role,
                                   uint64_t owner,struct nova_frame_ticket *out){
     if(!out)return false;
     *out=(struct nova_frame_ticket){0};
-    if(!owner || !nova_pmm_role_valid(role))return false;
+    if(!owner || !nova_pmm_role_valid(role) ||
+       !nova_pmm_metadata_valid() || !nova_pmm_owner_active(owner))return false;
     void *frame=nova_page_alloc_role(role);
     if(!frame)return false;
     const uintptr_t base=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;

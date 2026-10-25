@@ -7,8 +7,9 @@
 #include "../kernel/pmm.h"
 
 #define TEST_FRAMES 16u
-#define OWNER_A UINT64_C(0xA11CE)
-#define OWNER_B UINT64_C(0xB0B)
+static uint64_t owner_a,owner_b;
+#define OWNER_A owner_a
+#define OWNER_B owner_b
 static _Alignas(4096) uint8_t ram[TEST_FRAMES][4096];
 
 static void setup(void){
@@ -24,6 +25,8 @@ static void setup(void){
     hhdm.offset=(uint64_t)((uintptr_t)ram-0x200000u);
     assert(nova_pmm_init(&map,&hhdm));
     assert(nova_pmm_metadata_valid());
+    assert(nova_owner_create(&owner_a) && nova_owner_create(&owner_b));
+    assert(owner_a!=owner_b && nova_pmm_metadata_valid());
 }
 static void unchanged(const uint8_t *p,uint8_t value){
     for(unsigned i=0;i<4096;i++)assert(p[i]==value);

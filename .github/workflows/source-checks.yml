@@ -88,6 +88,22 @@ jobs:
             -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_frame_owners.c -o /tmp/nova-frame-owners-sanitized
           /tmp/nova-frame-owners-sanitized
+  owner-lifecycle:
+    name: Trusted owner lifecycle (host only, no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify owner lifecycle with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs tests/test_owner_lifecycle.c -o /tmp/nova-owner-lifecycle
+          /tmp/nova-owner-lifecycle
+      - name: Verify owner lifecycle with Clang ASan and UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_owner_lifecycle.c -o /tmp/nova-owner-lifecycle-sanitized
+          /tmp/nova-owner-lifecycle-sanitized
   image-tickets:
     name: Staged ELF generation tickets and rollback (no ISO)
     runs-on: ubuntu-24.04
