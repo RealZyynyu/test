@@ -27,7 +27,9 @@ struct nova_user_space {
     struct nova_page_table page_tables;
     void *stack_frames[NOVA_USER_STACK_PAGES];
     uint64_t stack_physical[NOVA_USER_STACK_PAGES];
+    uint64_t stack_generation[NOVA_USER_STACK_PAGES];
     uint32_t stack_count;
+    bool stack_guarded; /* generation-checked stack ownership */
     uint64_t stack_top;
     uint64_t initial_rsp;
     uint64_t guard_base;
@@ -66,13 +68,21 @@ static inline bool nova_user_space_frames_releasable(
     const struct nova_user_space *space,const struct nova_pt_ops *ops){
     if(!space||!nova_pt_tables_releasable(&space->page_tables,ops)||
        space->stack_count>NOVA_USER_STACK_PAGES)return false;
+    if(space->stack_guarded &&
+       (!ops->stack_ticket_allocate||!ops->stack_ticket_physical_address||
+        !ops->stack_ticket_release))return false;
     const struct nova_page_table *tree=&space->page_tables;
     for(uint32_t i=0;i<space->stack_count;i++){
         void *frame=space->stack_frames[i];
         uint64_t phys=0;
         if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
            !nova_pt_valid_phys(space->stack_physical[i])||
-           !nova_user_stack_physical(ops)(ops->context,frame,&phys)||
+           (space->stack_guarded ?
+              (!space->stack_generation[i] ||
+               !ops->stack_ticket_physical_address(ops->context,frame,
+                   space->stack_generation[i],&phys)) :
+              (space->stack_generation[i]!=0 ||
+               !nova_user_stack_physical(ops)(ops->context,frame,&phys))) ||
            phys!=space->stack_physical[i])return false;
         for(uint32_t j=0;j<i;j++)
             if(frame==space->stack_frames[j]||
@@ -92,8 +102,13 @@ static inline void nova_user_space_destroy(struct nova_user_space *space,
     if(nova_user_space_frames_releasable(space,ops)){
         /* Remove page-table references before releasing stack frames. */
         nova_pt_destroy(&space->page_tables,ops);
-        for(uint32_t i=0;i<space->stack_count;i++)
-            nova_user_stack_release(ops)(ops->context,space->stack_frames[i]);
+        for(uint32_t i=0;i<space->stack_count;i++){
+            if(space->stack_guarded)
+                (void)ops->stack_ticket_release(ops->context,
+                    space->stack_frames[i],space->stack_generation[i]);
+            else
+                nova_user_stack_release(ops)(ops->context,space->stack_frames[i]);
+        }
     }
     *space=(struct nova_user_space){0};
 }
@@ -108,7 +123,14 @@ static inline enum nova_pt_result nova_user_space_prepare(
         ops->stack_physical_address) &&
        (!ops->stack_allocate||!ops->stack_release||
         !ops->stack_physical_address))return NOVA_PT_INVALID;
+    const bool guarded=ops->stack_ticket_allocate||
+                       ops->stack_ticket_physical_address||
+                       ops->stack_ticket_release;
+    if(guarded && (!ops->stack_ticket_allocate||
+                   !ops->stack_ticket_physical_address||
+                   !ops->stack_ticket_release))return NOVA_PT_INVALID;
     *space=(struct nova_user_space){0};
+    space->stack_guarded=guarded;
     enum nova_pt_result result=nova_pt_prepare(&space->page_tables,ops,image);
     if(result!=NOVA_PT_OK)return result;
     space->guard_base=NOVA_USER_STACK_GUARD;
@@ -117,8 +139,20 @@ static inline enum nova_pt_result nova_user_space_prepare(
      * Runtime arguments / ABI bootstrap have NOT been implemented. */
     space->initial_rsp=NOVA_USER_STACK_TOP-16u;
     for(uint32_t i=0;i<NOVA_USER_STACK_PAGES;i++){
-        void *frame=nova_user_stack_alloc(ops)(ops->context);
-        if(!frame){result=NOVA_PT_OUT_OF_MEMORY;goto rollback;}
+        void *frame=NULL;
+        uint64_t generation=0;
+        if(guarded){
+            if(!ops->stack_ticket_allocate(ops->context,&frame,&generation)){
+                result=NOVA_PT_OUT_OF_MEMORY;goto rollback;
+            }
+            /* A forged/empty ticket must never authorize zeroing or free. */
+            if(!frame||!generation){
+                result=NOVA_PT_BAD_FRAME;goto rollback;
+            }
+        }else{
+            frame=nova_user_stack_alloc(ops)(ops->context);
+            if(!frame){result=NOVA_PT_OUT_OF_MEMORY;goto rollback;}
+        }
         /* Do NOT register or free a suspect frame before checking it.
          * A broken allocator may return an image frame, an existing table,
          * or a previously accepted stack page. Releasing such a frame on
@@ -136,7 +170,10 @@ static inline enum nova_pt_result nova_user_space_prepare(
                 result=NOVA_PT_BAD_FRAME;goto rollback;
             }
         uint64_t phys=0;
-        if(!nova_user_stack_physical(ops)(ops->context,frame,&phys) ||
+        if(!(guarded ?
+             ops->stack_ticket_physical_address(ops->context,frame,
+                                                  generation,&phys) :
+             nova_user_stack_physical(ops)(ops->context,frame,&phys)) ||
            !nova_pt_valid_phys(phys) ||
            ((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0){
             /* Unknown ownership: do not free an unverified frame. */
@@ -158,6 +195,7 @@ static inline enum nova_pt_result nova_user_space_prepare(
          * The cached physical identity avoids re-querying mutable callbacks. */
         space->stack_frames[space->stack_count]=frame;
         space->stack_physical[space->stack_count]=phys;
+        space->stack_generation[space->stack_count]=generation;
         space->stack_count++;
         uint8_t *bytes=(uint8_t*)frame;
         for(uint32_t off=0;off<NOVA_PT_PAGE_SIZE;off++)bytes[off]=0;

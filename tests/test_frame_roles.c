@@ -208,9 +208,176 @@ static void test_offline_role_integration(void){
     assert(nova_pmm.in_use==0 && nova_free_pages()==TEST_FRAMES);
     assert(nova_pmm_metadata_valid());
 }
+
+/* Real PMM generation tickets for offline stacks. These tests deliberately
+ * do not execute ELF images or activate the prepared page tables. */
+static unsigned ticket_budget=UINT32_MAX;
+static struct nova_frame_ticket forged_ticket;
+static bool ticket_stack_alloc(void *ctx,void **frame,uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation||ticket_budget==0)return false;
+    struct nova_frame_ticket t={0};
+    if(!nova_page_alloc_ticket(NOVA_FRAME_STACK,&t))return false;
+    if(ticket_budget!=UINT32_MAX)ticket_budget--;
+    *frame=t.frame;*generation=t.generation;
+    return true;
+}
+static bool ticket_stack_phys(void *ctx,const void *frame,
+                              uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket t={
+        .frame=(void *)frame,.generation=generation,.role=NOVA_FRAME_STACK
+    };
+    return nova_pmm_physical_ticket(&t,out);
+}
+static bool ticket_stack_free(void *ctx,void *frame,uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket t={
+        .frame=frame,.generation=generation,.role=NOVA_FRAME_STACK
+    };
+    return nova_page_free_ticket(&t);
+}
+static struct nova_pt_ops ticket_ops(void){
+    struct nova_pt_ops result=ops;
+    result.stack_ticket_allocate=ticket_stack_alloc;
+    result.stack_ticket_physical_address=ticket_stack_phys;
+    result.stack_ticket_release=ticket_stack_free;
+    return result;
+}
+static uint32_t stage_ticket_fixture(struct nova_process_table *processes){
+    fixture();
+    uint32_t pid=0;
+    assert(nova_process_stage(processes,"RAM:/STACK.ELF",read_elf,NULL,
+        IMAGE_BYTES,alloc_image,free_image,phys_image,NULL,&pid)==NOVA_PROCESS_OK);
+    return pid;
+}
+static void test_guarded_stack_lifecycle(void){
+    reset_pmm();
+    ticket_budget=UINT32_MAX;
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=ticket_ops();
+    struct nova_pt_ops partial=guarded;
+    partial.stack_ticket_release=NULL;
+    struct nova_user_space space={0};
+    uint32_t before=nova_pmm.in_use;
+    assert(nova_user_space_prepare(&space,&partial,image)==NOVA_PT_INVALID);
+    assert(nova_pmm.in_use==before);
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OK);
+    assert(space.stack_guarded && nova_user_stack_guard_is_unmapped(&space));
+    for(uint32_t i=0;i<space.stack_count;i++){
+        assert(space.stack_generation[i]!=0);
+        struct nova_frame_ticket t={
+            .frame=space.stack_frames[i],.generation=space.stack_generation[i],
+            .role=NOVA_FRAME_STACK
+        };
+        assert(nova_pmm_ticket_valid(&t));
+    }
+    /* A caller without generation callbacks must not release these frames. */
+    assert(!nova_user_space_frames_releasable(&space,&ops));
+    assert(nova_user_space_frames_releasable(&space,&guarded));
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==image->page_count);
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
+}
+static void test_stale_stack_ticket_blocks_all_cleanup(void){
+    reset_pmm();
+    ticket_budget=UINT32_MAX;
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=ticket_ops();
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OK);
+    struct nova_user_space original=space;
+    struct nova_frame_ticket stale={
+        .frame=space.stack_frames[0],.generation=space.stack_generation[0],
+        .role=NOVA_FRAME_STACK
+    };
+    assert(nova_page_free_ticket(&stale));
+    struct nova_frame_ticket replacement={0};
+    assert(nova_page_alloc_ticket(NOVA_FRAME_STACK,&replacement));
+    assert(replacement.frame==stale.frame);
+    assert(replacement.generation!=stale.generation);
+    memset(replacement.frame,0x6B,4096);
+    uint32_t before=nova_pmm.in_use;
+    assert(!nova_user_space_frames_releasable(&space,&guarded));
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==before);
+    assert(nova_pmm_ticket_valid(&replacement));
+    for(unsigned i=0;i<4096;i++)assert(((uint8_t *)replacement.frame)[i]==0x6B);
+    /* The test fixture alone knows which remaining allocations are ours. */
+    for(uint32_t i=1;i<original.stack_count;i++)
+        assert(ticket_stack_free(NULL,original.stack_frames[i],
+                                 original.stack_generation[i]));
+    nova_pt_destroy(&original.page_tables,&guarded);
+    assert(nova_page_free_ticket(&replacement));
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
+static void test_corrupt_stack_ticket_and_rollback(void){
+    reset_pmm();
+    ticket_budget=UINT32_MAX;
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=ticket_ops();
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OK);
+    struct nova_user_space original=space;
+    uint32_t before=nova_pmm.in_use;
+    space.stack_generation[1]++;
+    assert(!nova_user_space_frames_releasable(&space,&guarded));
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==before);
+    space=original;
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==image->page_count);
+    ticket_budget=1;
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OUT_OF_MEMORY);
+    assert(nova_pmm.in_use==image->page_count);
+    ticket_budget=UINT32_MAX;
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
+static bool forge_stack_alloc(void *ctx,void **frame,uint64_t *generation){
+    if(!ticket_stack_alloc(ctx,frame,generation))return false;
+    forged_ticket=(struct nova_frame_ticket){
+        .frame=*frame,.generation=*generation,.role=NOVA_FRAME_STACK
+    };
+    memset(*frame,0xA7,4096);
+    (*generation)++;
+    return true;
+}
+static void test_forged_stack_ticket_never_zeroed(void){
+    reset_pmm();
+    ticket_budget=UINT32_MAX;
+    forged_ticket=(struct nova_frame_ticket){0};
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=ticket_ops();
+    guarded.stack_ticket_allocate=forge_stack_alloc;
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_BAD_FRAME);
+    assert(!space.stack_count&&!space.prepared);
+    assert(nova_pmm_ticket_valid(&forged_ticket));
+    for(unsigned i=0;i<4096;i++)
+        assert(((uint8_t *)forged_ticket.frame)[i]==0xA7);
+    assert(nova_pmm.in_use==image->page_count+1u);
+    assert(nova_page_free_ticket(&forged_ticket));
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
 int main(void){
     test_role_transitions_and_corruption();
     test_offline_role_integration();
-    puts("PMM frame roles: cross-class frees rejected, metadata corruption blocked, staged ELF/table/stack integration OK.");
+    test_guarded_stack_lifecycle();
+    test_stale_stack_ticket_blocks_all_cleanup();
+    test_corrupt_stack_ticket_and_rollback();
+    test_forged_stack_ticket_never_zeroed();
+    puts("PMM roles and stack generation tickets: ABA, corruption, forged allocation, rollback and legacy checks OK.");
     return 0;
 }

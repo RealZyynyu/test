@@ -35,6 +35,11 @@
 typedef void *(*nova_pt_alloc_fn)(void *);
 typedef void (*nova_pt_free_fn)(void *,void *);
 typedef bool (*nova_pt_phys_fn)(void *,const void *,uint64_t *);
+/* Optional stack generation callbacks. A ticket must come from the
+ * allocator, never be reconstructed from a stale pointer. */
+typedef bool (*nova_pt_ticket_alloc_fn)(void *,void **,uint64_t *);
+typedef bool (*nova_pt_ticket_phys_fn)(void *,const void *,uint64_t,uint64_t *);
+typedef bool (*nova_pt_ticket_free_fn)(void *,void *,uint64_t);
 
 /* physical_address validates staged IMAGE frames during preflight.
  * Optional role-specific callbacks let the native PMM enforce independent
@@ -49,6 +54,9 @@ struct nova_pt_ops {
     nova_pt_alloc_fn stack_allocate;
     nova_pt_free_fn stack_release;
     nova_pt_phys_fn stack_physical_address;
+    nova_pt_ticket_alloc_fn stack_ticket_allocate;
+    nova_pt_ticket_phys_fn stack_ticket_physical_address;
+    nova_pt_ticket_free_fn stack_ticket_release;
 };
 static inline nova_pt_phys_fn nova_pt_table_physical(const struct nova_pt_ops *ops){
     return ops->table_physical_address?
