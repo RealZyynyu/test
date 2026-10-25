@@ -163,7 +163,7 @@ static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
     return true;
 }
 /* Trusted-kernel owner lifecycle only. IDs are not authenticated PIDs. */
-static bool nova_owner_create(uint64_t *out){
+static inline bool nova_owner_create(uint64_t *out){
     if(!out)return false;
     *out=0;
     if(!nova_pmm_metadata_valid() || nova_pmm.next_owner==UINT64_MAX)
@@ -178,7 +178,7 @@ static bool nova_owner_create(uint64_t *out){
     return false;
 }
 /* Never retire an owner with any outstanding frame allocation. */
-static bool nova_owner_retire(uint64_t owner){
+static inline bool nova_owner_retire(uint64_t owner){
     if(!owner || !nova_pmm_metadata_valid())return false;
     uint32_t slot=NOVA_OWNER_SLOT_CAP;
     for(uint32_t i=0;i<NOVA_OWNER_SLOT_CAP;i++)

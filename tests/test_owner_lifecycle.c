@@ -100,6 +100,7 @@ static void corruption(void){
     nova_pmm=good;
     assert(nova_pmm_metadata_valid() && nova_page_free_ticket(&ticket));
     assert(nova_owner_retire(a) && nova_owner_retire(b));
+    assert(nova_pmm_self_test()); /* legacy path remains usable */
 }
 int main(void){
     lifecycle();capacity();corruption();
