@@ -29,6 +29,45 @@ extern void nova_irq_timer_stub(void);
 extern void nova_irq_master_stub(void);
 extern void nova_irq_slave_stub(void);
 extern void nova_exception_stub(void);
+extern void nova_exception_0(void);
+extern void nova_exception_1(void);
+extern void nova_exception_2(void);
+extern void nova_exception_3(void);
+extern void nova_exception_4(void);
+extern void nova_exception_5(void);
+extern void nova_exception_6(void);
+extern void nova_exception_7(void);
+extern void nova_exception_8(void);
+extern void nova_exception_9(void);
+extern void nova_exception_10(void);
+extern void nova_exception_11(void);
+extern void nova_exception_12(void);
+extern void nova_exception_13(void);
+extern void nova_exception_14(void);
+extern void nova_exception_15(void);
+extern void nova_exception_16(void);
+extern void nova_exception_17(void);
+extern void nova_exception_18(void);
+extern void nova_exception_19(void);
+extern void nova_exception_20(void);
+extern void nova_exception_21(void);
+extern void nova_exception_22(void);
+extern void nova_exception_23(void);
+extern void nova_exception_24(void);
+extern void nova_exception_25(void);
+extern void nova_exception_26(void);
+extern void nova_exception_27(void);
+extern void nova_exception_28(void);
+extern void nova_exception_29(void);
+extern void nova_exception_30(void);
+extern void nova_exception_31(void);
+typedef void (*nova_fault_handler_fn)(void);
+static nova_fault_handler_fn const nova_cpu_exception_handlers[32]={
+    nova_exception_0,nova_exception_1,nova_exception_2,nova_exception_3,nova_exception_4,nova_exception_5,nova_exception_6,nova_exception_7,
+    nova_exception_8,nova_exception_9,nova_exception_10,nova_exception_11,nova_exception_12,nova_exception_13,nova_exception_14,nova_exception_15,
+    nova_exception_16,nova_exception_17,nova_exception_18,nova_exception_19,nova_exception_20,nova_exception_21,nova_exception_22,nova_exception_23,
+    nova_exception_24,nova_exception_25,nova_exception_26,nova_exception_27,nova_exception_28,nova_exception_29,nova_exception_30,nova_exception_31
+};
 static void nova_interrupt_out(uint16_t port,uint8_t val){
     __asm__ volatile("outb %0,%1"::"a"(val),"Nd"(port));
 }
@@ -64,6 +103,9 @@ static bool nova_interrupts_init(void){
     __asm__ volatile("cli");
     __asm__ volatile("mov %%cs, %0":"=r"(nova_kernel_cs));
     for(unsigned i=0;i<256;i++)nova_idt_set(i,nova_exception_stub);
+    /* Every architecturally defined CPU exception has its own stub.
+       Error-code exceptions do not receive a duplicate synthetic code. */
+    for(unsigned i=0;i<32;i++)nova_idt_set(i,nova_cpu_exception_handlers[i]);
     for(unsigned i=32;i<40;i++)nova_idt_set(i,nova_irq_master_stub);
     for(unsigned i=40;i<48;i++)nova_idt_set(i,nova_irq_slave_stub);
     nova_idt_set(32,nova_irq_timer_stub);
