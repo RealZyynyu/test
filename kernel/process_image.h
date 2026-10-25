@@ -30,6 +30,9 @@ typedef void (*nova_process_free_fn)(void *ctx,void *page);
 /* Trusted allocator callback: translates an allocated frame to its physical
  * page address. Pointer disjointness alone cannot detect HHDM aliases. */
 typedef bool (*nova_process_phys_fn)(void *ctx,const void *page,uint64_t *physical);
+/* Owner retirement is separate from frame release so a failed retirement can
+ * keep a bounded process-table tombstone for a later retry. */
+typedef bool (*nova_process_owner_retire_fn)(void *ctx,uint64_t owner);
 /* Guarded callbacks carry the ORIGINAL allocation generation from the PMM.
  * A caller must not reconstruct that generation from a stale pointer.
  * All callbacks are synchronous, kernel-trusted, and single-core only. */
@@ -69,6 +72,7 @@ struct nova_process_image {
     bool guarded; /* requires original generation on every image frame */
     uint32_t pid;
     uint64_t owner; /* registered PMM owner ID, 0 for legacy; not a PID */
+    bool owner_retirement_pending; /* frames gone; retry owner retirement only */
     uint64_t entry;
     uint16_t segments;
     uint16_t page_count;
@@ -172,7 +176,8 @@ static inline bool nova_process_frames_releasable_guarded(
     const struct nova_process_table *table,
     nova_process_phys_fn physical,void *context,
     const struct nova_process_guard_ops *guard){
-    if(!image||!physical||image->page_count>NOVA_PROCESS_MAX_PAGES||
+    if(!image||image->owner_retirement_pending||!physical||
+       image->page_count>NOVA_PROCESS_MAX_PAGES||
        (image->guarded &&
         (!guard || (image->owner ?
           (!guard->physical_owned||!guard->release_owned) :
@@ -221,7 +226,7 @@ static inline bool nova_process_release_image_impl(
     struct nova_process_image *image,const struct nova_process_table *table,
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx,
     const struct nova_process_guard_ops *guard){
-    if(!image)return false;
+    if(!image||image->owner_retirement_pending)return false;
     const bool safe=(image->guarded ?
         (guard && (image->owner ? guard->release_owned!=NULL :
                                   guard->release!=NULL)) :
@@ -271,7 +276,7 @@ static inline bool nova_process_drop_guarded(
     void *ctx){
     if(!physical||!guard)return false;
     struct nova_process_image *image=nova_process_find(table,pid);
-    if(!image||!image->guarded ||
+    if(!image||!image->guarded||image->owner_retirement_pending ||
        (image->owner ? (!guard->physical_owned||!guard->release_owned) :
                        (!guard->physical||!guard->release)))return false;
     return nova_process_release_image_impl(
@@ -279,6 +284,36 @@ static inline bool nova_process_drop_guarded(
 }
 /* Before zeroing/copying a candidate frame, reject pointer and physical
  * aliases against the current image and all staged foreign images. */
+/* Release an owner-bound image and retire its PMM owner as one retryable
+ * lifecycle operation. If retirement fails after all image frames are gone,
+ * retain a zero-page tombstone in the same slot; PDROP can retry retirement
+ * without losing the owner ID or pretending the process is still staged code. */
+static inline bool nova_process_drop_owned_guarded(
+    struct nova_process_table *table,uint32_t pid,
+    nova_process_phys_fn physical,const struct nova_process_guard_ops *guard,
+    nova_process_owner_retire_fn retire_owner,void *ctx){
+    if(!table||!physical||!guard||!retire_owner)return false;
+    struct nova_process_image *image=nova_process_find(table,pid);
+    if(!image||!image->staged||!image->guarded||!image->owner)return false;
+    const uint64_t owner=image->owner;
+    if(image->owner_retirement_pending){
+        if(image->page_count!=0)return false;
+        if(!retire_owner(ctx,owner))return false;
+        *image=(struct nova_process_image){0};
+        return true;
+    }
+    if(!nova_process_drop_guarded(table,pid,physical,guard,ctx))return false;
+    /* drop_guarded cleared the image only after every frame release succeeded;
+     * 'image' still points to the now-empty slot reserved for this owner. */
+    if(!retire_owner(ctx,owner)){
+        *image=(struct nova_process_image){
+            .staged=true,.guarded=true,.pid=pid,.owner=owner,
+            .owner_retirement_pending=true
+        };
+        return false;
+    }
+    return true;
+}
 static inline bool nova_process_frame_available_owned(
     const struct nova_process_table *table,
     const struct nova_process_image *current,const void *frame,
