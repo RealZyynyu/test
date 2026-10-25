@@ -19,6 +19,7 @@ static int fail_image_free_after=-1;
 static int fail_table_free_after=-1;
 static int fail_stack_free_after=-1;
 static struct nova_frame_ticket forged_table;
+static struct nova_frame_ticket forged_image;
 static void w16(size_t i,uint16_t x){elf[i]=(uint8_t)x;elf[i+1]=(uint8_t)(x>>8);}
 static void w32(size_t i,uint32_t x){
     for(unsigned k=0;k<4;k++)elf[i+k]=(uint8_t)(x>>(8u*k));
@@ -77,6 +78,16 @@ static bool phys_owned(void *ctx,uint64_t owner,const void *frame,
     struct nova_frame_ticket t={
         .frame=(void*)frame,.generation=gen,.role=NOVA_FRAME_IMAGE,.owner=owner};
     return nova_pmm_physical_ticket(&t,out);
+}
+static bool forged_owned_image_alloc(void *ctx,uint64_t owner,void **frame,
+                                     uint64_t *generation){
+    if(!alloc_owned(ctx,owner,frame,generation))return false;
+    forged_image=(struct nova_frame_ticket){
+        .frame=*frame,.generation=*generation,
+        .role=NOVA_FRAME_IMAGE,.owner=owner};
+    memset(*frame,0xA7,4096);
+    (*generation)++;
+    return true;
 }
 static bool free_owned(void *ctx,uint64_t owner,void *frame,uint64_t gen){
     (void)ctx;
@@ -626,6 +637,31 @@ static void test_retryable_stage_rollback(void){
     assert(!table.slots[0].rollback_pending&&!table.slots[0].staged);
     assert(nova_process_drop_guarded(&table,other_pid,legacy_phys,&guard,NULL));
     assert(nova_owner_retire(other));
+    assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
+
+    /* A forged allocation ticket is not freed, but its owner must not be
+     * forgotten when the tracked-image rollback itself succeeds. */
+    setup();
+    assert(nova_owner_create(&owner));
+    table=(struct nova_process_table){0};
+    pid=0;
+    const struct nova_process_guard_ops forged_guard={
+        .allocate_owned=forged_owned_image_alloc,
+        .physical_owned=phys_owned,.release_owned=free_owned};
+    assert(nova_process_stage_owned_guarded(&table,"RAM:/TEST.ELF",
+        read_elf,NULL,ELF_BYTES,legacy_phys,&forged_guard,owner,NULL,&pid)==
+        NOVA_PROCESS_ROLLBACK_PENDING);
+    assert(pid==0&&table.slots[0].rollback_pending&&
+           table.slots[0].owner==owner&&table.slots[0].page_count==0);
+    assert(nova_pmm_ticket_valid(&forged_image));
+    intact(forged_image.frame,0xA7);
+    assert(!nova_process_retry_stage_rollback(&table,0,NULL,legacy_phys,
+        &forged_guard,retire_owner_for_test,NULL));
+    intact(forged_image.frame,0xA7);
+    assert(nova_page_free_ticket(&forged_image));
+    assert(nova_process_retry_stage_rollback(&table,0,NULL,legacy_phys,
+        &forged_guard,retire_owner_for_test,NULL));
+    assert(!table.slots[0].rollback_pending);
     assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
 }
 static void test_retryable_owner_retirement(void){
