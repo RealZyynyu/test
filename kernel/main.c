@@ -17,6 +17,7 @@
 #include "ata.h"
 #include "fat16.h"
 #include "vfs.h"
+#include "elf64.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -474,7 +475,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"HELP  LS  CAT  TOUCH  RM  WRITE  DATE  CPU",1,secondary);
+        text(406,608,"HELP  VLS  VCAT  ELFCHK  ELFPAGES  PMM  PCI",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -609,9 +610,26 @@ static bool nova_disk_sector_read(void *context,uint32_t lba,uint8_t out[512]){
     (void)context;
     return nova_ata_read_sector(lba,out);
 }
+/* VFS-backed read-only ELF inspection. This never executes the file. */
+struct nova_elf_path { const struct nova_vfs *vfs; const char *path; };
+static bool nova_elf_from_vfs(void *context,uint64_t off,
+                              uint8_t *data,size_t len){
+    struct nova_elf_path *source=(struct nova_elf_path*)context;
+    if(!source||!source->vfs||!source->path||off>SIZE_MAX)return false;
+    return nova_vfs_read(source->vfs,source->path,(size_t)off,data,len);
+}
+static enum nova_elf_result nova_elf_check_path(const char *path,
+                                                struct nova_elf_info *info){
+    uint32_t size=0;bool readonly=false;
+    if(!nova_vfs_size(&nova_vfs_state,path,&size,&readonly))
+        return NOVA_ELF_IO_ERROR;
+    struct nova_elf_path reader={.vfs=&nova_vfs_state,.path=path};
+    return nova_elf64_probe(nova_elf_from_vfs,&reader,size,info);
+}
+
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("VLS VCAT VSTAT VTOUCH VWRITE VRM / HELP FATLS DISK");
+        shell_result("VLS VCAT VSTAT VWRITE VRM ELFCHK ELFPAGES HELP");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -758,6 +776,23 @@ static void shell_execute(void){
             shell_result(nova_vfs_write(&nova_vfs_state,path,(const uint8_t*)content,length)?
                 "RAM FILE UPDATED":"WRITE DENIED (DISK IS READ-ONLY)");
         }
+    }
+    else if(shell_input[0]=='E'&&shell_input[1]=='L'&&
+            shell_input[2]=='F'&&shell_input[3]=='C'&&
+            shell_input[4]=='H'&&shell_input[5]=='K'&&shell_input[6]==' '){
+        struct nova_elf_info info;
+        enum nova_elf_result result=nova_elf_check_path(shell_input+7,&info);
+        shell_result(nova_elf_result_name(result));
+    }
+    else if(shell_input[0]=='E'&&shell_input[1]=='L'&&
+            shell_input[2]=='F'&&shell_input[3]=='P'&&
+            shell_input[4]=='A'&&shell_input[5]=='G'&&
+            shell_input[6]=='E'&&shell_input[7]=='S'&&shell_input[8]==' '){
+        struct nova_elf_info info;
+        enum nova_elf_result result=nova_elf_check_path(shell_input+9,&info);
+        if(result==NOVA_ELF_OK)
+            nova_show_metric("APP PAGES=",info.pages," SEGMENTS=",info.load_count);
+        else shell_result(nova_elf_result_name(result));
     }
     else if(nova_file_equal(shell_input,"CLEAR")){
         for(int i=0;i<3;i++)shell_output[i][0]=0;
