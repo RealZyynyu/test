@@ -33,6 +33,19 @@ struct nova_user_space {
     uint64_t guard_base;
     bool prepared;
 };
+/* Role-specific stack callbacks are optional for synthetic host allocators,
+ * but the native kernel supplies all three to keep stack/table/image frames
+ * in distinct PMM roles. Never accept a partially configured override. */
+static inline nova_pt_alloc_fn nova_user_stack_alloc(const struct nova_pt_ops *ops){
+    return ops->stack_allocate?ops->stack_allocate:ops->allocate;
+}
+static inline nova_pt_free_fn nova_user_stack_release(const struct nova_pt_ops *ops){
+    return ops->stack_release?ops->stack_release:ops->release;
+}
+static inline nova_pt_phys_fn nova_user_stack_physical(const struct nova_pt_ops *ops){
+    return ops->stack_physical_address?
+           ops->stack_physical_address:ops->physical_address;
+}
 static inline bool nova_user_stack_range_valid(const struct nova_process_image *image){
     if(!image||!image->staged||!image->page_count||
        NOVA_USER_STACK_GUARD<NOVA_ELF64_USER_MIN ||
@@ -59,7 +72,7 @@ static inline bool nova_user_space_frames_releasable(
         uint64_t phys=0;
         if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
            !nova_pt_valid_phys(space->stack_physical[i])||
-           !ops->physical_address(ops->context,frame,&phys)||
+           !nova_user_stack_physical(ops)(ops->context,frame,&phys)||
            phys!=space->stack_physical[i])return false;
         for(uint32_t j=0;j<i;j++)
             if(frame==space->stack_frames[j]||
@@ -80,7 +93,7 @@ static inline void nova_user_space_destroy(struct nova_user_space *space,
         /* Remove page-table references before releasing stack frames. */
         nova_pt_destroy(&space->page_tables,ops);
         for(uint32_t i=0;i<space->stack_count;i++)
-            ops->release(ops->context,space->stack_frames[i]);
+            nova_user_stack_release(ops)(ops->context,space->stack_frames[i]);
     }
     *space=(struct nova_user_space){0};
 }
@@ -91,6 +104,10 @@ static inline enum nova_pt_result nova_user_space_prepare(
        !ops->physical_address||!nova_user_stack_range_valid(image)||
        space->prepared||space->stack_count||space->page_tables.tables_used)
         return NOVA_PT_INVALID;
+    if((ops->stack_allocate||ops->stack_release||
+        ops->stack_physical_address) &&
+       (!ops->stack_allocate||!ops->stack_release||
+        !ops->stack_physical_address))return NOVA_PT_INVALID;
     *space=(struct nova_user_space){0};
     enum nova_pt_result result=nova_pt_prepare(&space->page_tables,ops,image);
     if(result!=NOVA_PT_OK)return result;
@@ -100,7 +117,7 @@ static inline enum nova_pt_result nova_user_space_prepare(
      * Runtime arguments / ABI bootstrap have NOT been implemented. */
     space->initial_rsp=NOVA_USER_STACK_TOP-16u;
     for(uint32_t i=0;i<NOVA_USER_STACK_PAGES;i++){
-        void *frame=ops->allocate(ops->context);
+        void *frame=nova_user_stack_alloc(ops)(ops->context);
         if(!frame){result=NOVA_PT_OUT_OF_MEMORY;goto rollback;}
         /* Do NOT register or free a suspect frame before checking it.
          * A broken allocator may return an image frame, an existing table,
@@ -119,7 +136,7 @@ static inline enum nova_pt_result nova_user_space_prepare(
                 result=NOVA_PT_BAD_FRAME;goto rollback;
             }
         uint64_t phys=0;
-        if(!ops->physical_address(ops->context,frame,&phys) ||
+        if(!nova_user_stack_physical(ops)(ops->context,frame,&phys) ||
            !nova_pt_valid_phys(phys) ||
            ((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0){
             /* Unknown ownership: do not free an unverified frame. */
