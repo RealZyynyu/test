@@ -51,6 +51,7 @@ jobs:
           cp kernel/capabilities.h _builder/kernel/src/capabilities.h
           cp kernel/broker.h _builder/kernel/src/broker.h
           cp kernel/user_buffer.h _builder/kernel/src/user_buffer.h
+          cp kernel/app_storage.h _builder/kernel/src/app_storage.h
           cp limine.conf _builder/limine.conf
       - name: Build independent x86-64 kernel and ISO
         run: |
