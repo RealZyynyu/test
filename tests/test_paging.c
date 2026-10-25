@@ -51,6 +51,20 @@ static bool physical(void *unused,const void *frame,uint64_t *out){
 static const struct nova_pt_ops ops={
     .context=NULL,.allocate=allocate,.release=release,.physical_address=physical
 };
+/* Deliberately faulty allocator/callbacks: the paging builder must fail
+ * closed rather than overwrite image frames or install physical aliases. */
+static void *borrowed_allocate(void *frame){return frame;}
+struct alias_phys_context {
+    const void *aliased_frame;
+    uint64_t reported_physical;
+};
+static bool lying_physical(void *ctx,const void *frame,uint64_t *out){
+    struct alias_phys_context *alias=(struct alias_phys_context *)ctx;
+    if(!physical(NULL,frame,out))return false;
+    if(frame==alias->aliased_frame)*out=alias->reported_physical;
+    return true;
+}
+
 static void u16(size_t at,uint16_t v){
     binary[at]=(uint8_t)v;binary[at+1]=(uint8_t)(v>>8);
 }
@@ -189,6 +203,68 @@ static void test_failures(void){
     assert(nova_process_drop(&p,id,release,NULL));
     assert(active==0);
 }
+static void test_physical_alias_guards(void){
+    image_fixture();
+    struct nova_process_table processes={0};
+    uint32_t id=stage(&processes);
+    struct nova_process_image *img=nova_process_find(&processes,id);
+    assert(img && img->page_count==3 && active==3);
+    struct nova_page_table tree={0};
+    uint8_t first_bytes[32];
+    memcpy(first_bytes,img->pages[0].frame,sizeof(first_bytes));
+
+    /* The same pointer for two virtual pages would defeat W^X. */
+    uint8_t *saved_second=img->pages[1].frame;
+    img->pages[1].frame=img->pages[0].frame;
+    assert(nova_pt_prepare(&tree,&ops,img)==NOVA_PT_BAD_FRAME);
+    assert(!tree.tables_used && !tree.prepared && active==3);
+    img->pages[1].frame=saved_second;
+
+    /* Two different pointers claiming the same physical page are unsafe. */
+    uint64_t first_phys=0;
+    assert(physical(NULL,img->pages[0].frame,&first_phys));
+    struct alias_phys_context alias={
+        .aliased_frame=img->pages[1].frame,
+        .reported_physical=first_phys
+    };
+    struct nova_pt_ops dishonest=ops;
+    dishonest.context=&alias;
+    dishonest.physical_address=lying_physical;
+    assert(nova_pt_prepare(&tree,&dishonest,img)==NOVA_PT_BAD_FRAME);
+    assert(!tree.tables_used && active==3);
+
+    /* A broken allocator returning an image frame must never zero or free it. */
+    struct nova_pt_ops borrowed=ops;
+    borrowed.context=img->pages[0].frame;
+    borrowed.allocate=borrowed_allocate;
+    assert(nova_pt_prepare(&tree,&borrowed,img)==NOVA_PT_BAD_FRAME);
+    assert(!tree.tables_used && active==3);
+    assert(!memcmp(first_bytes,img->pages[0].frame,sizeof(first_bytes)));
+
+    /* Distinct virtual addresses may not share a physical leaf, regardless
+     * of whether their intended permissions are RX or RW/NX. */
+    assert(nova_pt_prepare(&tree,&ops,img)==NOVA_PT_OK);
+    uint64_t phys=0,flags=0;
+    assert(nova_pt_lookup(&tree,0x401000,&phys,&flags));
+    uint16_t leaves=tree.mapped_pages;
+    uint16_t tables=tree.tables_used;
+    assert(nova_pt_map_one(&tree,&ops,0x404000,phys,6u)==NOVA_PT_CONFLICT);
+    assert(nova_pt_map_one(&tree,&ops,0x404000,
+                           tree.root_physical,6u)==NOVA_PT_BAD_FRAME);
+    assert(tree.mapped_pages==leaves && tree.tables_used==tables);
+    assert(!nova_pt_lookup(&tree,0x404000,&phys,&flags));
+
+    /* An allocator cannot use an already-mapped leaf as a new PT. */
+    assert(nova_pt_map_one(&tree,&borrowed,0x800000,
+                           UINT64_C(0x900000),6u)==NOVA_PT_BAD_FRAME);
+    assert(tree.tables_used==tables && tree.mapped_pages==leaves);
+    assert(!memcmp(first_bytes,img->pages[0].frame,sizeof(first_bytes)));
+
+    nova_pt_destroy(&tree,&ops);
+    assert(active==3);
+    assert(nova_process_drop(&processes,id,release,NULL));
+    assert(active==0);
+}
 static void test_guarded_user_stack(void){
     image_fixture();
     struct nova_process_table p={0};
@@ -299,6 +375,7 @@ int main(void){
     test_page_tables();
     test_isolated_roots();
     test_failures();
+    test_physical_alias_guards();
     test_guarded_user_stack();
     test_stack_failures();
     test_distinct_stack_frames();
