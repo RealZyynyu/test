@@ -1,86 +1,83 @@
-# NOVA OS Native 0.7 — interrupt foundations
+# NOVA OS Native — ongoing development (no new ISO until final)
 
-NOVA Native is a freestanding, independent x86-64 OS **developer preview**
-built in C and assembly. It is not Debian, Linux or a web simulation.
-It uses the Limine bootloader and draws its own macOS-inspired desktop.
+**NOVA OS** is an independent freestanding x86-64 C/assembly kernel, not
+Debian/Linux, Windows or a browser app. It boots via Limine and draws its own
+macOS-inspired desktop.
 
-## Download and testing
+## Release policy — IMPORTANT
 
-When the automated workflow succeeds, visit the
-[NOVA Native 0.7 prerelease](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.7)
-and download `nova-os-native-x86_64.iso`.
-Release assets also include a SHA256 checksum, VM screenshot and serial log.
+**There will be no more automatic ISOs on pushes.** The ISO publishing workflow
+`.github/workflows/build-native-iso.yml` can now run **only** through a manual
+GitHub Actions dispatch with an explicit `final_release` approval. Changing
+source files must never create a new ISO or GitHub Release automatically.
 
-**Only boot this ISO in QEMU/VirtualBox.** In Windows 11 create a VM:
-64-bit guest type, BIOS/legacy boot (EFI disabled initially), 1 CPU,
-2 GB RAM, and optical drive with ISO. No virtual hard disk is required.
-If Limine reports "This CPU does not support 64-bit mode", correct
-VirtualBox's 64-bit virtual CPU support; this is not an ISO setting.
+The existing [0.9 prerelease](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.9)
+remains a historical *VM developer build*, not the finished system.
 
-## New in 0.7
+For every normal code push, [source-checks.yml](.github/workflows/source-checks.yml)
+performs host-side unit tests **and** compiles/links the freestanding kernel ELF
+without generating an ISO.
 
-- **x86-64 Interrupt Descriptor Table:** 256 kernel interrupt gates,
-  CPU exceptions routed to a fail-stop handler, and explicit
-  save/restore of integer registers in assembler IRQ stubs.
-- **Legacy PIC and PIT setup:** basic PIC remapping and PIT channel 0
-  configuration for nominal 100 Hz. This is *experimental*;
-  **hardware IRQ0 delivery was NOT confirmed** in automated QEMU runs
-  as of this release. The x86-64 IDT and IRQ handler are exercised by
-  a direct software interrupt, and boot tests check the return path.
-- **Cooperative job fallback:** three in-kernel jobs continue to run
-  using a polling fallback when hardware PIT IRQ0 is not delivered.
-  Timer-driven callbacks also work on machines where the IRQ arrives.
-- **Terminal command TICKS:** shows the count of hardware timer
-  interrupts actually observed, excluding one software test interrupt.
-  The value can remain zero depending on the virtual platform.
-- **Harder boot checks:** serial logs verify the existing physical
-  page allocator, PCI inventory, RAM files and software interrupt
-  self-test before releasing the ISO.
+## Current experimental kernel components
 
-### Previously implemented
-- Custom framebuffer desktop, Finder-like RAM file view, settings,
-  Arcade, Notes, original icons, Inter font rasterization
-- PS/2 keyboard and mouse input with clickable app buttons
-- Small bounded volatile RAM files (Notes changes disappear at reboot)
-- Minimal kernel-mode command interpreter
-- 4-KiB page allocator over a bounded 8-MiB Limine HHDM physical pool
-- Limited read-only PCI configuration enumeration
-- Simple cooperative kernel callbacks
+- Custom framebuffer desktop, floating dock, Finder-style RAM file browser,
+  Notes app, Arcade, Settings, Terminal, Inter-derived anti-aliased fonts.
+- Polling PS/2 keyboard and mouse for virtual machines.
+- Bounded physical page allocator (up to 8 MiB, 4 KiB pages, self-tested).
+- Cooperative in-kernel jobs, IDT and software interrupt diagnostics.
+  Hardware PIT IRQ0 delivery was not verified across QEMU runs and has a
+  fallback; there are **no protected processes or preemptive threads**.
+- RTC and CPUID read-only inspection, limited read-only PCI scan.
+- Volatile RAM file table: `TOUCH`, `WRITE`, `CAT`, `RM`, `LS`.
+- **Read-only legacy IDE/ATA sectors**: probes an emulated primary-master disk,
+  reads LBA28 sectors, never writes, never formats.
+- **New: read-only FAT16**: mounts a FAT16 superfloppy or first primary MBR
+  FAT16 partition, validates geometry, lists short 8.3 root filenames, and
+  reads file bytes using checked FAT cluster chains. **No FAT12/FAT32, long
+  filenames, subdirectory traversal or disk writes.**
 
-### Keyboard and terminal
+### FAT16 shell commands (in development, not yet in an ISO)
 
-1–6 switch main apps, 7 opens Terminal, Esc returns Home, T changes
-appearance outside text entry. Arcade: WASD or arrow keys.
-Terminal: `HELP`, `LS`, `CAT NOTES.TXT`, `UNAME`, `MEM`,
-`PMM`, `PCI`, `TASKS`, `TICKS` and `CLEAR`.
+`FATSTAT` — detected FAT16 volume information
 
-## What is STILL MISSING
+`FATLS` — list a few root-directory FAT16 filenames
 
-**NOVA cannot yet replace Windows 11.** There is no safe installer,
-persistent SSD/HDD filesystem, modern storage/USB/network/audio/GPU
-driver stack, user-mode app runtime, Windows game compatibility,
-complete virtual memory/address-space management, proper
-privilege separation, user processes, preemptive scheduler, security
-update system or recovery tools.
+`FATCAT README.TXT` — show a short printable file (up to 90 bytes)
 
-The IDT is a kernel-level foundation, not a production-grade
-interrupt or fault-handling subsystem. The PIT support is unverified
-for hardware IRQ delivery; the scheduler is NOT preemptive.
+`DISK` and `SECTOR0` — read-only IDE drive / first sector diagnostics
 
-**Never overwrite your Windows installation with a NOVA preview.**
+**FAT16 support currently has host-side simulated-disk tests.** A source-only
+freestanding compile check runs on GitHub; full in-VM FAT16 functional testing
+remains required before any final release. Do not treat this as a fully proven
+disk filesystem.
 
-## Source and licenses
+### Source files
 
-`kernel/main.c`: UI and kernel integration
-`kernel/interrupts.h`: x86-64 IDT, PIC and PIT setup
-`kernel/irq.S`: x86-64 interrupt stubs
-`kernel/pmm.h`: physical page allocator
-`kernel/scheduler.h`: cooperative jobs
-`kernel/pci.h`: PCI enumeration
-`kernel/ramfs.h`: volatile RAM file table
-`kernel/ps2_mouse.h`: emulated PS/2 mouse
-`tools/generate_font.py`: open-source Inter raster font generation
+- `kernel/main.c` — UI, shell, drivers and kernel orchestration
+- `kernel/ata.h` — legacy IDE LBA28 sector **reads only**
+- `kernel/fat16.h` — independent bounded FAT16 parser and file reader
+- `kernel/ramfs.h` — RAM-only files
+- `kernel/pmm.h` — physical page allocator
+- `kernel/scheduler.h` — cooperative in-kernel job runner
+- `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
+- `kernel/ps2_mouse.h`, `kernel/rtc.h`, `kernel/cpu.h`, `kernel/pci.h`
+- `tests/test_fat16.c` — synthetic MBR/superfloppy, FAT file, boundary and
+  malformed-data tests, compiled with GCC and Clang/UBSan
 
-The original NOVA source is MIT licensed, Inter is OFL-1.1
-(https://github.com/rsms/inter), and upstream bootloader and
-freestanding components retain their own licenses.
+## Important missing features / final-release blockers
+
+NOVA still cannot replace Windows. Before a credible daily-use release we need
+a robust CPU exception/interrupt/timer architecture, virtual address spaces,
+process/user-mode isolation, real scheduling, file permissions, reliable
+persistent read/write filesystem and modern AHCI/NVMe drivers, USB input,
+Ethernet/Wi-Fi networking, graphics/audio, secure installation, updates,
+recovery and a native software ecosystem. Windows apps/games require a separate
+and very large compatibility project.
+
+**Do not overwrite Windows, flash this ISO to a real disk, or run this
+experimental kernel on your primary PC.** Use a disposable VirtualBox or QEMU
+virtual machine only. The disk driver is intentionally read-only.
+
+NOVA original code is MIT-licensed; the Inter glyph source is OFL-1.1,
+and Limine/upstream dependencies retain their own licenses. No Apple-owned
+original logos, wallpapers or fonts are bundled.
