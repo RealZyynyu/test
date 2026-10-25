@@ -250,7 +250,7 @@ static inline enum nova_pt_result nova_pt_prepare(
         const struct nova_process_page *p=&image->pages[i];
         uint64_t phys=0;
         if(!p->frame || !ops->physical_address(ops->context,p->frame,&phys) ||
-           !nova_pt_valid_phys(phys))return NOVA_PT_BAD_FRAME;
+           (!nova_pt_valid_phys(phys) || phys!=p->physical_page))return NOVA_PT_BAD_FRAME;
         for(uint16_t j=0;j<tree->protected_count;j++){
             if(tree->protected_frames[j]==p->frame ||
                tree->protected_physical[j]==phys){
