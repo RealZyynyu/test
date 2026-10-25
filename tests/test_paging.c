@@ -101,7 +101,7 @@ static bool read_binary(void *unused,uint64_t offset,uint8_t *out,size_t n){
 static uint32_t stage(struct nova_process_table *table){
     uint32_t pid=0;
     assert(nova_process_stage(table,"DISK:/TEST.ELF",read_binary,NULL,
-           BINARY_BYTES,allocate,release,NULL,&pid)==NOVA_PROCESS_OK);
+           BINARY_BYTES,allocate,release,physical,NULL,&pid)==NOVA_PROCESS_OK);
     return pid;
 }
 static void test_page_tables(void){
@@ -141,7 +141,7 @@ static void test_page_tables(void){
     assert(nova_pt_prepare(&tree,&ops,img)==NOVA_PT_INVALID);
     nova_pt_destroy(&tree,&ops);
     assert(active==3 && !tree.prepared && tree.tables_used==0);
-    assert(nova_process_drop(&processes,first,release,NULL));
+    assert(nova_process_drop(&processes,first,release,physical,NULL));
     assert(active==0);
 }
 static void test_isolated_roots(void){
@@ -161,8 +161,8 @@ static void test_isolated_roots(void){
     assert(active==alloc_before-4u);
     assert(nova_pt_lookup(&b,0x402000,&bp,&bf));
     nova_pt_destroy(&b,&ops);
-    assert(nova_process_drop(&p,id1,release,NULL));
-    assert(nova_process_drop(&p,id2,release,NULL));
+    assert(nova_process_drop(&p,id1,release,physical,NULL));
+    assert(nova_process_drop(&p,id2,release,physical,NULL));
     assert(active==0);
 }
 static void test_failures(void){
@@ -200,7 +200,7 @@ static void test_failures(void){
     assert(nova_pt_prepare(NULL,&ops,img)==NOVA_PT_INVALID);
     assert(nova_pt_prepare(&t,&ops,NULL)==NOVA_PT_INVALID);
     assert(!nova_pt_lookup(&t,0x401000,NULL,NULL));
-    assert(nova_process_drop(&p,id,release,NULL));
+    assert(nova_process_drop(&p,id,release,physical,NULL));
     assert(active==0);
 }
 static void test_physical_alias_guards(void){
@@ -262,7 +262,7 @@ static void test_physical_alias_guards(void){
 
     nova_pt_destroy(&tree,&ops);
     assert(active==3);
-    assert(nova_process_drop(&processes,id,release,NULL));
+    assert(nova_process_drop(&processes,id,release,physical,NULL));
     assert(active==0);
 }
 static void test_guarded_user_stack(void){
@@ -315,7 +315,7 @@ static void test_guarded_user_stack(void){
     assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_INVALID);
     nova_user_space_destroy(&space,&ops);
     assert(active==3&&!space.prepared);
-    assert(nova_process_drop(&p,pid,release,NULL));
+    assert(nova_process_drop(&p,pid,release,physical,NULL));
     assert(active==0);
 }
 static void test_stack_failures(void){
@@ -346,7 +346,7 @@ static void test_stack_failures(void){
     assert(nova_user_space_prepare(&space,&incomplete,img)==NOVA_PT_INVALID);
     assert(nova_user_space_prepare(NULL,&ops,img)==NOVA_PT_INVALID);
     assert(nova_user_space_prepare(&space,&ops,NULL)==NOVA_PT_INVALID);
-    assert(nova_process_drop(&p,pid,release,NULL));
+    assert(nova_process_drop(&p,pid,release,physical,NULL));
     assert(active==0);
 }
 static void test_distinct_stack_frames(void){
@@ -366,8 +366,8 @@ static void test_distinct_stack_frames(void){
     nova_user_space_destroy(&x,&ops);
     assert(nova_user_stack_guard_is_unmapped(&y));
     nova_user_space_destroy(&y,&ops);
-    assert(nova_process_drop(&p,a,release,NULL));
-    assert(nova_process_drop(&p,b,release,NULL));
+    assert(nova_process_drop(&p,a,release,physical,NULL));
+    assert(nova_process_drop(&p,b,release,physical,NULL));
     assert(active==0);
 }
 
@@ -460,7 +460,7 @@ static void test_stack_allocator_ownership(void){
         assert(active==(fault.fresh_suspect?4u:3u));
         if(fault.fresh_suspect)release(NULL,fault.fresh_suspect);
         assert(active==3);
-        assert(nova_process_drop(&processes,pid,release,NULL));
+        assert(nova_process_drop(&processes,pid,release,physical,NULL));
         assert(active==0);
     }
 }
@@ -572,7 +572,7 @@ static void test_offline_pte_integrity(void){
     assert(nova_user_stack_guard_is_unmapped(&space));
     nova_user_space_destroy(&space,&ops);
     assert(active==3);
-    assert(nova_process_drop(&processes,pid,release,NULL));
+    assert(nova_process_drop(&processes,pid,release,physical,NULL));
     assert(active==0);
 }
 
@@ -693,7 +693,7 @@ static void test_corrupt_teardown_metadata(void){
     assert(nova_user_space_frames_releasable(&space,&ops));
     nova_user_space_destroy(&space,&ops);
     assert(active==3);
-    assert(nova_process_drop(&processes,pid,release,NULL));
+    assert(nova_process_drop(&processes,pid,release,physical,NULL));
     assert(active==0);
 }
 
