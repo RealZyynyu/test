@@ -61,6 +61,10 @@ struct nova_page_table {
     uint64_t protected_physical[NOVA_PROCESS_MAX_PAGES];
     /* Reject aliases between leaf PTEs, including RX/RW dual mappings. */
     uint64_t mapped_physical[NOVA_PT_MAX_MAPPED_PAGES];
+    /* Offline mapping manifest: a PTE must match the recorded VA, frame
+     * and intended rights. Raw PTEs alone are not an access authority. */
+    uint64_t mapped_virtual[NOVA_PT_MAX_MAPPED_PAGES];
+    uint64_t mapped_entry[NOVA_PT_MAX_MAPPED_PAGES];
     /* Temporary reservation while a new stack leaf is mapped. A new page
      * table must never borrow/zero that not-yet-installed leaf frame. */
     void *pending_leaf_frame;
@@ -89,6 +93,7 @@ static inline bool nova_pt_valid_user(uint64_t va){
 }
 static inline uint64_t *nova_pt_find(const struct nova_page_table *tree,
                                      uint64_t phys){
+    if(!tree||tree->tables_used>NOVA_PT_MAX_TABLES)return NULL;
     for(uint16_t i=0;i<tree->tables_used;i++){
         if(tree->table_physical[i]==phys)return (uint64_t *)tree->tables[i];
     }
@@ -144,7 +149,8 @@ static inline enum nova_pt_result nova_pt_map_one(
     uint64_t va,uint64_t physical,uint32_t flags){
     if(!tree||!tree->root_physical||!nova_pt_valid_user(va)||
        !nova_pt_valid_phys(physical) || (flags&~7u) ||
-       ((flags&3u)==3u))return NOVA_PT_INVALID;
+       ((flags&3u)==3u) || tree->tables_used>NOVA_PT_MAX_TABLES ||
+       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES)return NOVA_PT_INVALID;
     if(tree->mapped_pages>=NOVA_PT_MAX_MAPPED_PAGES)
         return NOVA_PT_RESOURCE_LIMIT;
     /* Same physical frame must not have a writable and executable alias. */
@@ -162,8 +168,12 @@ static inline enum nova_pt_result nova_pt_map_one(
     for(unsigned level=0;level<3;level++){
         uint64_t entry=entries[indices[level]];
         if(entry&NOVA_PT_P){
-            if((entry&(NOVA_PT_US|NOVA_PT_RW))!=(NOVA_PT_US|NOVA_PT_RW) ||
-               (entry&NOVA_PT_NX))return NOVA_PT_CONFLICT;
+            /* Offline page tables have never been activated. No CPU A/D
+             * bits should exist; reject mutated upper-level entries. */
+            if(entry!=((entry&NOVA_PT_ADDR)|
+                       NOVA_PT_P|NOVA_PT_US|NOVA_PT_RW) ||
+               !nova_pt_valid_phys(entry&NOVA_PT_ADDR))
+                return NOVA_PT_CONFLICT;
             entries=nova_pt_find(tree,entry&NOVA_PT_ADDR);
             if(!entries)return NOVA_PT_BAD_FRAME;
         }else{
@@ -178,8 +188,12 @@ static inline enum nova_pt_result nova_pt_map_one(
     uint64_t permissions=NOVA_PT_P|NOVA_PT_US;
     if(flags&2u)permissions|=NOVA_PT_RW;
     if(!(flags&1u))permissions|=NOVA_PT_NX;
-    entries[indices[3]]=physical|permissions;
-    tree->mapped_physical[tree->mapped_pages++]=physical;
+    uint16_t slot=tree->mapped_pages++;
+    uint64_t entry=physical|permissions;
+    entries[indices[3]]=entry;
+    tree->mapped_physical[slot]=physical;
+    tree->mapped_virtual[slot]=va;
+    tree->mapped_entry[slot]=entry;
     return NOVA_PT_OK;
 }
 static inline enum nova_pt_result nova_pt_prepare(
@@ -224,9 +238,32 @@ static inline enum nova_pt_result nova_pt_prepare(
     tree->prepared=true;
     return NOVA_PT_OK;
 }
+/* Only addresses in the immutable-intent manifest may be looked up.
+ * An unexpectedly present PTE (including a forged guard mapping), changed
+ * rights or altered page-table links must never authorize a user buffer.
+ * This is OFFLINE validation, not a tamper-proof runtime page table.
+ */
 static inline bool nova_pt_lookup(const struct nova_page_table *tree,
                    uint64_t va,uint64_t *physical,uint64_t *attributes){
-    if(!tree||!tree->prepared||!nova_pt_valid_user(va)||!physical||!attributes)
+    if(!tree||!tree->prepared||!nova_pt_valid_user(va)||
+       !physical||!attributes||
+       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
+       tree->tables_used>NOVA_PT_MAX_TABLES)return false;
+    uint64_t expected=0;
+    bool found=false;
+    for(uint16_t i=0;i<tree->mapped_pages;i++){
+        if(tree->mapped_virtual[i]!=va)continue;
+        if(found)return false; /* duplicate manifest entries are corrupt */
+        expected=tree->mapped_entry[i];
+        if((expected&NOVA_PT_ADDR)!=tree->mapped_physical[i])
+            return false;
+        found=true;
+    }
+    if(!found || !nova_pt_valid_phys(expected&NOVA_PT_ADDR) ||
+       (expected&~(NOVA_PT_ADDR|NOVA_PT_P|NOVA_PT_RW|
+                    NOVA_PT_US|NOVA_PT_NX))!=0 ||
+       (expected&(NOVA_PT_P|NOVA_PT_US))!=(NOVA_PT_P|NOVA_PT_US) ||
+       ((expected&NOVA_PT_RW)!=0 && (expected&NOVA_PT_NX)==0))
         return false;
     uint16_t indices[4]={
         (uint16_t)((va>>39)&511u),(uint16_t)((va>>30)&511u),
@@ -236,14 +273,43 @@ static inline bool nova_pt_lookup(const struct nova_page_table *tree,
     if(!entries)return false;
     for(unsigned level=0;level<3;level++){
         uint64_t entry=entries[indices[level]];
-        if(!(entry&NOVA_PT_P)||!(entry&NOVA_PT_US))return false;
+        if(entry!=((entry&NOVA_PT_ADDR)|
+                   NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US) ||
+           !nova_pt_valid_phys(entry&NOVA_PT_ADDR))return false;
         entries=nova_pt_find(tree,entry&NOVA_PT_ADDR);
         if(!entries)return false;
     }
-    uint64_t entry=entries[indices[3]];
-    if(!(entry&NOVA_PT_P)||!(entry&NOVA_PT_US))return false;
-    *physical=entry&NOVA_PT_ADDR;
-    *attributes=entry&~NOVA_PT_ADDR;
+    if(entries[indices[3]]!=expected)return false;
+    *physical=expected&NOVA_PT_ADDR;
+    *attributes=expected&~NOVA_PT_ADDR;
     return true;
+}
+/* An unmapped guard is not just an address rejected by nova_pt_lookup:
+ * a corrupted, unregistered, or non-present-but-nonzero PTE must also fail.
+ * Empty upper-level slots are safe; malformed links are not.
+ */
+static inline bool nova_pt_slot_empty(const struct nova_page_table *tree,
+                                      uint64_t va){
+    if(!tree||!tree->prepared||!nova_pt_valid_user(va)||
+       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
+       tree->tables_used>NOVA_PT_MAX_TABLES)return false;
+    for(uint16_t i=0;i<tree->mapped_pages;i++)
+        if(tree->mapped_virtual[i]==va)return false;
+    uint16_t indices[4]={
+        (uint16_t)((va>>39)&511u),(uint16_t)((va>>30)&511u),
+        (uint16_t)((va>>21)&511u),(uint16_t)((va>>12)&511u)
+    };
+    uint64_t *entries=nova_pt_find(tree,tree->root_physical);
+    if(!entries)return false;
+    for(unsigned level=0;level<3;level++){
+        uint64_t entry=entries[indices[level]];
+        if(entry==0)return true;
+        if(entry!=((entry&NOVA_PT_ADDR)|
+                   NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US) ||
+           !nova_pt_valid_phys(entry&NOVA_PT_ADDR))return false;
+        entries=nova_pt_find(tree,entry&NOVA_PT_ADDR);
+        if(!entries)return false;
+    }
+    return entries[indices[3]]==0;
 }
 #endif
