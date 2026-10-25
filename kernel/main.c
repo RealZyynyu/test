@@ -24,6 +24,7 @@
 #include "game_input.h"
 #include "capabilities.h"
 #include "broker.h"
+#include "app_storage.h"
 #include "user_buffer.h"
 
 __attribute__((used, section(".limine_requests_start")))
@@ -169,8 +170,10 @@ static struct nova_fat16 nova_disk_fat16;
 static struct nova_vfs nova_vfs_state={.disk=&nova_disk_fat16};
 static struct nova_process_table nova_processes;
 static struct nova_cap_registry nova_app_policy;
+static struct nova_save_store nova_private_saves;
 static const struct nova_broker_context nova_kernel_broker={
-    .rights=&nova_app_policy,.processes=&nova_processes,.vfs=&nova_vfs_state
+    .rights=&nova_app_policy,.processes=&nova_processes,.vfs=&nova_vfs_state,
+    .saves=&nova_private_saves
 };
 /* OFFLINE: never activated via CR3. Missing all kernel mappings. */
 static struct nova_user_space nova_user_spaces[NOVA_PROCESS_SLOTS];
@@ -866,9 +869,18 @@ static void shell_execute(void){
                 if(mapped==NOVA_PT_OK){
                     /* All new staged images are registered with ZERO rights.
                      * No app-visible grant command exists in this kernel. */
-                    if(nova_cap_register(&nova_app_policy,&nova_processes,pid))
-                        nova_show_metric("IMAGE STAGED, NO RIGHTS PID=",pid,NULL,0);
-                    else{
+                    if(nova_cap_register(&nova_app_policy,&nova_processes,pid)){
+                        if(nova_save_register(&nova_private_saves,&nova_processes,pid))
+                            nova_show_metric("IMAGE STAGED, NO RIGHTS PID=",pid,NULL,0);
+                        else{
+                            /* Never leave a half-registered image behind. */
+                            (void)nova_cap_unregister(&nova_app_policy,pid);
+                            nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
+                            (void)nova_process_drop(&nova_processes,pid,
+                                nova_process_page_release,NULL);
+                            shell_result("PRIVATE SAVE SLOT UNAVAILABLE");
+                        }
+                    }else{
                         nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                         (void)nova_process_drop(&nova_processes,pid,
                             nova_process_page_release,NULL);
@@ -966,7 +978,8 @@ static void shell_execute(void){
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
             size_t slot=nova_process_index(p);
-            /* Clear all application rights before freeing its memory. */
+            /* Wipe private volatile save before revoking rights and memory. */
+            (void)nova_save_unregister(&nova_private_saves,pid);
             (void)nova_cap_unregister(&nova_app_policy,pid);
             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
             bool ok=nova_process_drop(&nova_processes,pid,
@@ -1209,6 +1222,7 @@ void kmain(void){
     serial_log("NOVA_OFFLINE_GUARDED_STACK_READY\n");
     serial_log("NOVA_APP_CAPABILITIES_DEFAULT_DENY\n");
     serial_log("NOVA_OFFLINE_BROKER_ABI_V1_READY\n");
+    serial_log("NOVA_PRIVATE_RAM_SAVES_READY\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
         // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
