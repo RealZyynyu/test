@@ -70,7 +70,9 @@ darf der Prozessdeskriptor deshalb nicht einfach verschwinden.
 Prozessslot. Dieser Tombstone enthält keine Image-Frames und wird nicht erneut
 als ausführbares Image freigegeben. `PDROP` versucht beim nächsten Aufruf nur noch
 die Eigentümerstilllegung. Der Slot wird erst gelöscht, wenn die Stilllegung
-erfolgreich ist. Dieselbe zentrale Teardown-Routine wird für Setup-Rollbacks
+erfolgreich ist. Vor einem Retry werden außerdem alle Tombstone-Felder und
+alle Image-Seiteneinträge auf den erwarteten leeren Zustand geprüft; ein
+beschädigter Tombstone kann den Eigentümer nicht stilllegen. Dieselbe zentrale Teardown-Routine wird für Setup-Rollbacks
 verwendet; fehlgeschlagene Stack-/Tabellenfreigaben stoppen den Rollback, bevor
 Image-Frames oder der Eigentümer freigegeben werden.
 
