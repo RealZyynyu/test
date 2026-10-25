@@ -12,6 +12,7 @@
 #include "scheduler.h"
 #include "pci.h"
 #include "interrupts.h"
+#include "fault.h"
 #include "rtc.h"
 #include "cpu.h"
 #include "ata.h"
@@ -1129,10 +1130,22 @@ void nova_timer_interrupt(void){
     if(nova_timer_ticks==100)serial_log("NOVA_TIMER_1S_OK\n");
     __asm__ volatile("outb %0,%1"::"a"((uint8_t)0x20),"Nd"((uint16_t)0x20));
 }
-/* Fatal exceptions are deliberately not returned from. */
+/* Fatal exceptions are never resumed. Assembly captures vector, CPU
+ * error code, RIP and registers without touching absent ring-0 RSP/SS.
+ * Keep this path serial-only: framebuffer and heap may themselves be broken.
+ * No IST/double-fault stack yet; this is diagnostic groundwork, not recovery.
+ */
 __attribute__((noreturn))
-void nova_exception_panic(void){
-    serial_log("NOVA_EXCEPTION_FATAL\n");
+void nova_exception_panic(const struct nova_fault_frame *frame){
+    __asm__ volatile("cli" ::: "memory");
+    uint64_t cr2=0;
+    if(frame && frame->vector==14)
+        __asm__ volatile("mov %%cr2,%0":"=r"(cr2));
+    char report[320];
+    if(nova_fault_format(frame,cr2,report,sizeof(report))){
+        serial_log(report);
+        serial_log("\n");
+    }else serial_log("NOVA_EXCEPTION_FATAL FORMAT_FAILURE\n");
     for(;;)__asm__ volatile("cli; hlt");
 }
 
