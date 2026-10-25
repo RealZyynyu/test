@@ -2,6 +2,7 @@
  * Uses only Limine USABLE regions, maps through the Limine HHDM, and
  * manages a bounded 8 MiB pool. No virtual address spaces or isolation.
  * Never touches disk. Freestanding, single-core, no interrupt concurrency.
+ * Rejects overflowed memory ranges and wipes frames on release.
  */
 #ifndef NOVA_PMM_H
 #define NOVA_PMM_H
@@ -25,25 +26,36 @@ static uint64_t nova_align_up(uint64_t value,uint64_t align){
 }
 static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
                           volatile struct limine_hhdm_response *hhdm){
-    if(!mm || !hhdm)return false;
-    uint64_t base=0;uint32_t pages=0;
+    /* Reinitializing an active allocator would lose all page ownership. */
+    if(nova_pmm.initialized || !mm || !hhdm || !mm->entries)return false;
+    uint64_t base=0;
+    uint32_t pages=0;
+    const uint64_t offset=(uint64_t)hhdm->offset;
     for(uint64_t i=0;i<mm->entry_count;i++){
         struct limine_memmap_entry *entry=mm->entries[i];
-        if(!entry || entry->type!=LIMINE_MEMMAP_USABLE)continue;
-        if(entry->base>UINT64_MAX-NOVA_PAGE_SIZE)continue;
-        uint64_t first=nova_align_up(entry->base,NOVA_PAGE_SIZE);
-        if(first<entry->base || first>=entry->base+entry->length)continue;
-        uint64_t avail=(entry->base+entry->length-first)/NOVA_PAGE_SIZE;
-        if(avail>pages){
-            pages=avail>NOVA_PAGE_POOL_CAP?NOVA_PAGE_POOL_CAP:(uint32_t)avail;
-            base=first;
-            if(pages==NOVA_PAGE_POOL_CAP)break;
-        }
+        if(!entry || entry->type!=LIMINE_MEMMAP_USABLE ||
+           entry->length<NOVA_PAGE_SIZE)continue;
+        /* Reject malicious/corrupt BIOS region bounds before arithmetic. */
+        if(entry->base>UINT64_MAX-entry->length ||
+           entry->base>UINT64_MAX-(NOVA_PAGE_SIZE-1u))continue;
+        const uint64_t end=entry->base+entry->length;
+        const uint64_t first=nova_align_up(entry->base,NOVA_PAGE_SIZE);
+        if(first>=end)continue;
+        const uint64_t available=(end-first)/NOVA_PAGE_SIZE;
+        const uint32_t count=available>NOVA_PAGE_POOL_CAP?
+                             NOVA_PAGE_POOL_CAP:(uint32_t)available;
+        if(count<=pages)continue;
+        /* Entire HHDM mapped pool must fit uintptr_t without wraparound. */
+        const uint64_t last=first+(uint64_t)count*NOVA_PAGE_SIZE-1u;
+        if(last>UINTPTR_MAX || offset>UINTPTR_MAX-last)continue;
+        pages=count;
+        base=first;
+        if(pages==NOVA_PAGE_POOL_CAP)break;
     }
     if(pages<8)return false;
     for(size_t i=0;i<NOVA_BITMAP_SIZE;i++)nova_pmm.bitmap[i]=0;
     nova_pmm.phys_base=base;
-    nova_pmm.hhdm_offset=(uintptr_t)hhdm->offset;
+    nova_pmm.hhdm_offset=(uintptr_t)offset;
     nova_pmm.pages=pages;
     nova_pmm.in_use=0;
     nova_pmm.initialized=true;
@@ -73,6 +85,10 @@ static bool nova_page_free(void *ptr){
     uint32_t i=(uint32_t)(delta/NOVA_PAGE_SIZE);
     uint8_t mask=(uint8_t)(1u<<(i&7));
     if(!(nova_pmm.bitmap[i>>3]&mask))return false;
+    /* Erase the released page before making it available to another app.
+       Volatile stores prevent the compiler from optimizing the wipe out. */
+    volatile uint8_t *bytes=(volatile uint8_t *)ptr;
+    for(size_t b=0;b<NOVA_PAGE_SIZE;b++)bytes[b]=0;
     nova_pmm.bitmap[i>>3]=(uint8_t)(nova_pmm.bitmap[i>>3]&~mask);
     nova_pmm.in_use--;
     return true;
