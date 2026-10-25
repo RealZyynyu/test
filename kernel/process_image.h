@@ -58,7 +58,8 @@ enum nova_process_result {
     NOVA_PROCESS_NO_SLOT,
     NOVA_PROCESS_NO_MEMORY,
     NOVA_PROCESS_READ_ERROR,
-    NOVA_PROCESS_BAD_FRAME
+    NOVA_PROCESS_BAD_FRAME,
+    NOVA_PROCESS_ROLLBACK_PENDING
 };
 struct nova_process_page {
     uint64_t virtual_page;
@@ -73,6 +74,7 @@ struct nova_process_image {
     uint32_t pid;
     uint64_t owner; /* registered PMM owner ID, 0 for legacy; not a PID */
     bool owner_retirement_pending; /* frames gone; retry owner retirement only */
+    bool rollback_pending; /* failed PSTAGE cleanup; slot stays reserved */
     uint64_t entry;
     uint16_t segments;
     uint16_t page_count;
@@ -104,6 +106,7 @@ static inline const char *nova_process_result_name(enum nova_process_result resu
         case NOVA_PROCESS_NO_MEMORY: return "INSUFFICIENT PAGE FRAMES";
         case NOVA_PROCESS_READ_ERROR: return "PROGRAM IMAGE READ ERROR";
         case NOVA_PROCESS_BAD_FRAME: return "ALLOCATOR RETURNED AN ALIASED PAGE";
+        case NOVA_PROCESS_ROLLBACK_PENDING: return "STAGE ROLLBACK PENDING; RETRY REQUIRED";
         default: return "UNKNOWN PROCESS ERROR";
     }
 }
@@ -198,7 +201,7 @@ static inline bool nova_process_frames_releasable_guarded(
         if(table){
             for(uint32_t slot=0;slot<NOVA_PROCESS_SLOTS;slot++){
                 const struct nova_process_image *other=&table->slots[slot];
-                if(other==image||!other->staged)continue;
+                if(other==image||(!other->staged&&!other->rollback_pending))continue;
                 if(other->page_count>NOVA_PROCESS_MAX_PAGES)return false;
                 for(uint32_t j=0;j<other->page_count;j++){
                     const struct nova_process_page *foreign=&other->pages[j];
@@ -359,7 +362,7 @@ static inline bool nova_process_frame_available_owned(
     }
     for(uint32_t slot=0;slot<NOVA_PROCESS_SLOTS;slot++){
         const struct nova_process_image *other=&table->slots[slot];
-        if(other==current||!other->staged)continue;
+        if(other==current||(!other->staged&&!other->rollback_pending))continue;
         if(other->page_count>NOVA_PROCESS_MAX_PAGES)return false;
         for(uint32_t j=0;j<other->page_count;j++){
             const struct nova_process_page *page=&other->pages[j];
@@ -389,6 +392,70 @@ static inline bool nova_process_frame_available(
     return nova_process_frame_available_guarded(
         table,current,frame,0,physical,context,NULL,physical_out);
 }
+/* Convert a failed PSTAGE cleanup into an explicit reserved slot. Keep
+ * only the remaining frame tickets: this descriptor is never discoverable as
+ * a staged image and cannot be overwritten by a later allocation. */
+static inline enum nova_process_result nova_process_stage_abort(
+    struct nova_process_image *image,const struct nova_process_table *table,
+    nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx,
+    const struct nova_process_guard_ops *guard,
+    enum nova_process_result reason){
+    if(nova_process_release_image_impl(image,table,free_page,physical,ctx,guard)){
+        /* A rejected owner-bound allocator frame is deliberately not freed.
+         * Retain its owner ID so the caller can retry retirement rather than
+         * losing the only handle to an owner that may still own that frame. */
+        if(reason==NOVA_PROCESS_BAD_FRAME&&image->owner){
+            *image=(struct nova_process_image){
+                .guarded=true,.owner=image->owner,.rollback_pending=true
+            };
+            return NOVA_PROCESS_ROLLBACK_PENDING;
+        }
+        return reason;
+    }
+    image->staged=false;
+    image->rollback_pending=true;
+    image->owner_retirement_pending=false;
+    image->pid=0;
+    image->entry=0;
+    image->segments=0;
+    for(size_t i=0;i<NOVA_PROCESS_LABEL_CAP;i++)image->label[i]=0;
+    return NOVA_PROCESS_ROLLBACK_PENDING;
+}
+
+/* Retry a failed PSTAGE rollback by slot, not PID: failed images were never
+ * staged and must not be visible to normal process lookup. A zero-page pending
+ * slot retains its owner ID if retirement previously failed. */
+static inline bool nova_process_retry_stage_rollback(
+    struct nova_process_table *table,uint32_t slot,
+    nova_process_free_fn free_page,nova_process_phys_fn physical,
+    const struct nova_process_guard_ops *guard,
+    nova_process_owner_retire_fn retire_owner,void *ctx){
+    if(!table||slot>=NOVA_PROCESS_SLOTS||!physical)return false;
+    struct nova_process_image *image=&table->slots[slot];
+    if(!image->rollback_pending||image->staged||
+       image->owner_retirement_pending||image->pid||image->entry||
+       image->segments||image->label[0]||
+       image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
+    for(uint32_t i=image->page_count;i<NOVA_PROCESS_MAX_PAGES;i++){
+        const struct nova_process_page *p=&image->pages[i];
+        if(p->virtual_page||p->frame||p->physical_page||p->generation||p->flags)
+            return false;
+    }
+    const uint64_t owner=image->owner;
+    if(owner&&(!image->guarded||!guard||!retire_owner))return false;
+    if(image->page_count &&
+       !nova_process_release_image_impl(image,table,free_page,physical,ctx,guard))
+        return false;
+    if(owner&&!retire_owner(ctx,owner)){
+        *image=(struct nova_process_image){
+            .guarded=true,.owner=owner,.rollback_pending=true
+        };
+        return false;
+    }
+    *image=(struct nova_process_image){0};
+    return true;
+}
+
 /* Stages checked ELF bytes but never maps them into active CR3 or executes
  * any user instructions. The guarded variant uses allocation-time tickets
  * for every ELF page and on all rollback/drop paths. */
@@ -412,7 +479,9 @@ static inline enum nova_process_result nova_process_stage_impl(
     if(elf.pages>NOVA_PROCESS_MAX_PAGES)return NOVA_PROCESS_TOO_LARGE;
     struct nova_process_image *image=NULL;
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
-        if(!table->slots[i].staged){image=&table->slots[i];break;}
+        if(!table->slots[i].staged&&!table->slots[i].rollback_pending){
+            image=&table->slots[i];break;
+        }
     }
     if(!image || table->next_pid==UINT32_MAX)return NOVA_PROCESS_NO_SLOT;
     *image=(struct nova_process_image){0};
@@ -430,9 +499,9 @@ static inline enum nova_process_result nova_process_stage_impl(
         uint32_t first_index=image->page_count;
         for(uint32_t page=0;page<pages;page++){
             if(image->page_count>=NOVA_PROCESS_MAX_PAGES){
-                (void)nova_process_release_image_impl(
-                    image,table,free_page,physical,page_context,guard);
-                return NOVA_PROCESS_TOO_LARGE;
+                return nova_process_stage_abort(
+                    image,table,free_page,physical,page_context,guard,
+                    NOVA_PROCESS_TOO_LARGE);
             }
             void *raw=NULL;
             uint64_t generation=0;
@@ -445,18 +514,18 @@ static inline enum nova_process_result nova_process_stage_impl(
             }else raw=allocate(page_context);
             uint8_t *frame=(uint8_t*)raw;
             if(!frame){
-                (void)nova_process_release_image_impl(
-                    image,table,free_page,physical,page_context,guard);
-                return NOVA_PROCESS_NO_MEMORY;
+                return nova_process_stage_abort(
+                    image,table,free_page,physical,page_context,guard,
+                    NOVA_PROCESS_NO_MEMORY);
             }
             uint64_t frame_phys=0;
             if(!nova_process_frame_available_guarded(
                     table,image,frame,generation,physical,page_context,
                     guard,&frame_phys)){
                 /* Suspect allocation: do not zero OR free it. */
-                (void)nova_process_release_image_impl(
-                    image,table,free_page,physical,page_context,guard);
-                return NOVA_PROCESS_BAD_FRAME;
+                return nova_process_stage_abort(
+                    image,table,free_page,physical,page_context,guard,
+                    NOVA_PROCESS_BAD_FRAME);
             }
             /* Do not trust the allocator to clear previously used memory. */
             for(uint32_t b=0;b<4096;b++)frame[b]=0;
@@ -479,9 +548,9 @@ static inline enum nova_process_result nova_process_stage_impl(
                !nova_elf_read_exact(read_file,read_context,file_size,
                        s->file_offset+copied,image->pages[index].frame+in_page,
                        length)){
-                (void)nova_process_release_image_impl(
-                    image,table,free_page,physical,page_context,guard);
-                return NOVA_PROCESS_READ_ERROR;
+                return nova_process_stage_abort(
+                    image,table,free_page,physical,page_context,guard,
+                    NOVA_PROCESS_READ_ERROR);
             }
             copied+=length;
         }
