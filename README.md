@@ -61,6 +61,7 @@ disk filesystem.
 - `kernel/elf64.h` — validated ELF64 executable metadata (never executes)
 - `kernel/process_image.h` — staged image frames, cleanup and resource limits
 - `kernel/paging.h` — offline PML4 user-page mapping constructor (never CR3)
+- `kernel/user_space.h` — planned RW/NX user stack, guard page and cleanup
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -203,6 +204,32 @@ page-aligned frames, including W^X, NX, address validation, separate PML4
 roots, allocation-failure rollback, double-mapping refusal and full
 cleanup. GitHub Actions additionally compiles the complete freestanding
 kernel without building an ISO.
+
+## Guarded user-stack preparation (still offline)
+
+A new `kernel/user_space.h` assembles the **non-running** program image,
+its candidate four-level x86-64 page tables, and a dedicated zeroed
+16-KiB user stack:
+
+- Four writable **non-executable (NX)** 4-KiB pages are mapped at a fixed
+  high user-space virtual address; the immediately preceding 4-KiB
+  **guard page is left unmapped**.
+- The future initial stack pointer is 16-byte aligned.
+- Preparing an image rejects virtual-address overlap between program
+  segments and the stack or its guard page.
+- Each staged image receives independent page tables and physical
+  stack frames. Allocation or mapping failures release all new resources.
+- `PDROP` releases both the stack and page-table frames before releasing
+  the program image. `PSTACK <pid>` reports the planned stack and guard.
+- GCC/Clang tests verify guard behavior, RW/NX permissions, separate
+  stack frames, zeroed contents, rollback, bounds and full cleanup.
+
+These are **software-constructed structures only**. No CR3 switch, NXE
+configuration, TSS, ring-3 privilege change, syscall ABI, actual user
+stack access, exception recovery, or program execution is implemented.
+Thus the guard page is not yet an *enforced* protection boundary in a
+running user process. The ISO remains a manually approved final-only
+artifact; no new ISO was created for this source change.
 
 ## Important missing features / final-release blockers
 
