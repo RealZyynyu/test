@@ -24,6 +24,41 @@ static struct nova_page_manager nova_pmm;
 static uint64_t nova_align_up(uint64_t value,uint64_t align){
     return (value+(align-1))&~(align-1);
 }
+/* Reject damaged PMM bookkeeping BEFORE indexing the bitmap, wiping a
+ * frame, or returning a physical address. This is a single-core consistency
+ * check, not an authenticated ownership proof or a concurrency primitive.
+ * The pool is deliberately small (at most 2048 frames); a full bitmap scan
+ * is preferable to acting on inconsistent allocation metadata.
+ */
+static bool nova_pmm_metadata_valid(void){
+    if(!nova_pmm.initialized || nova_pmm.pages<8u ||
+       nova_pmm.pages>NOVA_PAGE_POOL_CAP ||
+       nova_pmm.in_use>nova_pmm.pages ||
+       (nova_pmm.phys_base&(NOVA_PAGE_SIZE-1u))!=0 ||
+       (nova_pmm.hhdm_offset&(NOVA_PAGE_SIZE-1u))!=0)return false;
+    const uint64_t span=(uint64_t)nova_pmm.pages*NOVA_PAGE_SIZE;
+    if(nova_pmm.phys_base>UINTPTR_MAX-(span-1u))return false;
+    const uintptr_t last=(uintptr_t)(nova_pmm.phys_base+span-1u);
+    if(nova_pmm.hhdm_offset>UINTPTR_MAX-last)return false;
+
+    const uint32_t used_bytes=(nova_pmm.pages+7u)/8u;
+    uint32_t counted=0;
+    for(uint32_t i=0;i<NOVA_BITMAP_SIZE;i++){
+        const uint8_t bits=nova_pmm.bitmap[i];
+        /* Unused bitmap bytes and tail bits must remain clear. */
+        if(i>=used_bytes){
+            if(bits)return false;
+            continue;
+        }
+        if(i==nova_pmm.pages/8u && (nova_pmm.pages&7u)!=0){
+            const uint8_t allowed=(uint8_t)((1u<<(nova_pmm.pages&7u))-1u);
+            if((bits&(uint8_t)~allowed)!=0)return false;
+        }
+        for(unsigned bit=0;bit<8;bit++)
+            counted+=(uint32_t)((bits>>bit)&1u);
+    }
+    return counted==nova_pmm.in_use;
+}
 static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
                           volatile struct limine_hhdm_response *hhdm){
     /* Reinitializing an active allocator would lose all page ownership. */
@@ -31,6 +66,8 @@ static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
     uint64_t base=0;
     uint32_t pages=0;
     const uint64_t offset=(uint64_t)hhdm->offset;
+    /* A misaligned HHDM would produce unaligned page pointers. */
+    if((offset&(NOVA_PAGE_SIZE-1u))!=0)return false;
     for(uint64_t i=0;i<mm->entry_count;i++){
         struct limine_memmap_entry *entry=mm->entries[i];
         if(!entry || entry->type!=LIMINE_MEMMAP_USABLE ||
@@ -62,7 +99,7 @@ static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
     return true;
 }
 static void *nova_page_alloc(void){
-    if(!nova_pmm.initialized)return NULL;
+    if(!nova_pmm_metadata_valid())return NULL;
     for(uint32_t i=0;i<nova_pmm.pages;i++){
         uint8_t mask=(uint8_t)(1u<<(i&7));
         if(nova_pmm.bitmap[i>>3]&mask)continue;
@@ -76,7 +113,7 @@ static void *nova_page_alloc(void){
     return NULL;
 }
 static bool nova_page_free(void *ptr){
-    if(!nova_pmm.initialized || !ptr)return false;
+    if(!ptr || !nova_pmm_metadata_valid())return false;
     uintptr_t mapped=(uintptr_t)ptr;
     uintptr_t beginning=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;
     if(mapped<beginning)return false;
@@ -96,7 +133,7 @@ static bool nova_page_free(void *ptr){
 /* Convert a PMM-owned HHDM page to its verified physical address.
  * Does not accept arbitrary kernel pointers or unallocated frames. */
 static bool nova_pmm_physical(const void *ptr,uint64_t *physical){
-    if(!nova_pmm.initialized||!ptr||!physical)return false;
+    if(!ptr||!physical||!nova_pmm_metadata_valid())return false;
     uintptr_t base=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;
     uintptr_t p=(uintptr_t)ptr;
     if(p<base)return false;
@@ -109,10 +146,10 @@ static bool nova_pmm_physical(const void *ptr,uint64_t *physical){
     return true;
 }
 static uint32_t nova_free_pages(void){
-    return nova_pmm.initialized?nova_pmm.pages-nova_pmm.in_use:0;
+    return nova_pmm_metadata_valid()?nova_pmm.pages-nova_pmm.in_use:0;
 }
 static bool nova_pmm_self_test(void){
-    if(!nova_pmm.initialized)return false;
+    if(!nova_pmm_metadata_valid())return false;
     uint32_t old=nova_free_pages();
     uint64_t *a=(uint64_t*)nova_page_alloc();
     uint64_t *b=(uint64_t*)nova_page_alloc();
