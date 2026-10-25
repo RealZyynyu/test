@@ -1184,11 +1184,14 @@ static void shell_execute(void){
                     shell_result("TEARDOWN INCOMPLETE; RETRY PDROP");
                 else{
                     const uint64_t owner=p->owner;
-                    bool ok=nova_process_drop_guarded(&nova_processes,pid,
+                    bool image_released=nova_process_drop_guarded(&nova_processes,pid,
                         nova_process_page_phys,&nova_image_guard_ops,NULL);
-                    if(ok)ok=nova_owner_retire(owner);
-                    shell_result(ok?"IMAGE+STACK+TABLES RELEASED":
-                                      "RELEASE INCOMPLETE; RETRY PDROP");
+                    if(!image_released)
+                        shell_result("IMAGE RELEASE FAILED; TICKETS RETAINED");
+                    else if(!nova_owner_retire(owner))
+                        shell_result("OWNER RETIRE FAILED; INSPECT PMM");
+                    else
+                        shell_result("IMAGE+STACK+TABLES RELEASED");
                 }
             }
         }
