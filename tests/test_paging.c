@@ -622,8 +622,9 @@ static void test_corrupt_teardown_metadata(void){
     tree.tables[1]=img->pages[0].frame;
     tree.table_physical[1]=original.mapped_physical[0];
     nova_pt_destroy(&tree,&ops);
-    assert(active==baseline && physical(NULL,img->pages[0].frame,
-                                         &tree.root_physical));
+    uint64_t still_owned=0;
+    assert(active==baseline &&
+           physical(NULL,img->pages[0].frame,&still_owned));
     tree=original;
 
     tree.root_physical^=NOVA_PT_PAGE_SIZE;
