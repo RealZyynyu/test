@@ -400,13 +400,14 @@ static inline enum nova_process_result nova_process_stage_abort(
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx,
     const struct nova_process_guard_ops *guard,
     enum nova_process_result reason){
+    const uint64_t owner=image?image->owner:0;
     if(nova_process_release_image_impl(image,table,free_page,physical,ctx,guard)){
         /* A rejected owner-bound allocator frame is deliberately not freed.
          * Retain its owner ID so the caller can retry retirement rather than
          * losing the only handle to an owner that may still own that frame. */
-        if(reason==NOVA_PROCESS_BAD_FRAME&&image->owner){
+        if(reason==NOVA_PROCESS_BAD_FRAME&&owner){
             *image=(struct nova_process_image){
-                .guarded=true,.owner=image->owner,.rollback_pending=true
+                .guarded=true,.owner=owner,.rollback_pending=true
             };
             return NOVA_PROCESS_ROLLBACK_PENDING;
         }
