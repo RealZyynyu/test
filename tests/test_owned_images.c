@@ -615,6 +615,11 @@ static void test_retryable_stage_rollback(void){
     assert(table.slots[0].rollback_pending&&!table.slots[0].staged);
     assert(table.slots[0].owner==owner&&table.slots[0].page_count==2);
     assert(!nova_owner_retire(owner));
+    table.slots[0].label[5]='X';
+    assert(!nova_process_retry_stage_rollback(&table,0,NULL,legacy_phys,&guard,
+                                              retire_owner_for_test,NULL));
+    assert(nova_pmm.in_use==2);
+    table.slots[0].label[5]=0;
 
     /* A new image may use another slot, but must not overwrite the pending
      * descriptor or alias any of its still-owned frames. */
