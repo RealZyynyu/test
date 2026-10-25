@@ -59,6 +59,7 @@ disk filesystem.
 - `kernel/ramfs.h` — RAM-only files
 - `kernel/vfs.h` — explicit RAM:/ and read-only DISK:/ storage namespace
 - `kernel/elf64.h` — validated ELF64 executable metadata (never executes)
+- `kernel/process_image.h` — staged image frames, cleanup and resource limits
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -136,6 +137,38 @@ real per-process page tables, ELF segment mapping, user/kernel privilege
 separation, protected system calls, a correct scheduler and an application
 runtime. Passing the ELF header tests is not evidence the OS can execute
 third-party apps or Windows binaries.
+
+## Staged program images — next process milestone
+
+NOVA now has **bounded staged-process image support** (`kernel/process_image.h`).
+After ELF64 validation, it can use the current physical page allocator to
+copy ELF program segments into separate memory frames, zero-fill BSS,
+record intended page permissions and release every page when the image is
+discarded. All file reads go through the existing VFS (including read-only
+FAT16). This groundwork is deliberately limited to **4 staged images**, each
+using at most **32 × 4 KiB pages (128 KiB)**.
+
+New **development-only** terminal commands:
+
+```text
+PSTAGE DISK:/APP.ELF   # stage validated ELF segments in separate RAM pages
+PLIST                 # count staged images
+PINFO 1               # memory-page and segment count for image ID 1
+PDROP 1               # release all pages of staged image ID 1
+```
+
+These commands and files are in source control; no new ISO has been generated.
+Host-based tests check independent frame allocation, file-byte copying,
+zero-filled BSS, page-count bounds, rollback on I/O or allocation errors,
+four-slot capacity, PID reuse safety and memory release. An integration test
+stages an ELF from a simulated FAT16 disk through the VFS into memory.
+
+**Critical limitation:** These are *not running processes*. All pages are
+still kernel-addressable; virtual addresses and RX/RW flags are metadata only.
+NOVA does not yet create protected CPU page tables, enforce privileges,
+use a TSS, switch to ring 3, perform context switching, support syscalls,
+or execute the bytes of a program. It would be inaccurate and unsafe to
+claim that this work provides actual isolation or multitasking.
 
 ## Important missing features / final-release blockers
 
