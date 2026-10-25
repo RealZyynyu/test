@@ -604,6 +604,14 @@ static void test_retryable_owner_retirement(void){
     assert(image&&image->owner_retirement_pending&&image->owner==owner);
     assert(image->staged&&image->guarded&&image->page_count==0);
     assert(nova_pmm_ticket_valid(&orphan));
+    assert(!nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(!nova_process_frames_releasable_guarded(
+        image,&table,legacy_phys,NULL,&guard));
+    image->entry=0x400000u; /* corrupt tombstone metadata must not retire */
+    assert(!nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
+                                            retire_owner_for_test,NULL));
+    assert(image->owner_retirement_pending);
+    image->entry=0;
     assert(nova_pmm.in_use==1&&!nova_owner_retire(owner));
     /* Once the unrelated owner frame is resolved, PDROP retries only owner
      * retirement; it must not attempt to free image frames a second time. */
