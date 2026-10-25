@@ -15,6 +15,7 @@
 #include "rtc.h"
 #include "cpu.h"
 #include "ata.h"
+#include "fat16.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -153,6 +154,7 @@ static uint64_t usable_memory_mb=0;
 static uint64_t nova_heartbeats=0;
 static uint32_t nova_last_free_pages=0;
 static bool nova_pmm_test_ok=false;
+static struct nova_fat16 nova_disk_fat16;
 
 static char shell_input[64]="";
 static unsigned shell_len=0;
@@ -600,9 +602,14 @@ static void nova_show_metric(const char *prefix,uint64_t value,const char *suffi
     if(suffix){nova_append_text(line,sizeof(line),suffix);nova_append_uint(line,sizeof(line),other);}
     shell_result(line);
 }
+/* Adapter deliberately exposes only reads; no disk-write API exists. */
+static bool nova_disk_sector_read(void *context,uint32_t lba,uint8_t out[512]){
+    (void)context;
+    return nova_ata_read_sector(lba,out);
+}
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("LS CAT TOUCH RM WRITE DATE CPU DISK MEM PMM PCI");
+        shell_result("HELP LS CAT FATLS FATCAT FATSTAT DISK TOUCH RM WRITE");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -612,7 +619,7 @@ static void shell_execute(void){
         }
         shell_result(list);
     }
-    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.9 X86_64");
+    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE DEVELOPMENT X86_64");
     else if(nova_file_equal(shell_input,"TICKS"))
         nova_show_metric("TIMER IRQ HANDLER CALLS ",nova_timer_ticks,NULL,0);
     else if(nova_file_equal(shell_input,"MEM"))
@@ -644,6 +651,48 @@ static void shell_execute(void){
         if(!nova_ata_read_sector(0,bytes))shell_result("READ-ONLY DISK SECTOR UNAVAILABLE");
         else shell_result((bytes[510]==0x55 && bytes[511]==0xAA)?
                           "SECTOR0 HAS MBR SIGNATURE":"SECTOR0 READ OK (NO MBR SIGNATURE)");
+    }
+    else if(nova_file_equal(shell_input,"FATSTAT")){
+        if(nova_disk_fat16.mounted)
+            nova_show_metric("FAT16 CLUSTERS=",nova_disk_fat16.cluster_count,
+                             " SPCL=",nova_disk_fat16.sectors_per_cluster);
+        else shell_result("NO READABLE FAT16 VOLUME");
+    }
+    else if(nova_file_equal(shell_input,"FATLS")){
+        if(!nova_disk_fat16.mounted)shell_result("NO READABLE FAT16 VOLUME");
+        else{
+            char names[100]="";
+            for(size_t i=0;i<6;i++){
+                struct nova_fat_file file;
+                if(!nova_fat16_entry(&nova_disk_fat16,i,&file))break;
+                if(names[0])nova_append_text(names,sizeof(names)," ");
+                nova_append_text(names,sizeof(names),file.name);
+            }
+            shell_result(names[0]?names:"FAT16 ROOT DIRECTORY EMPTY");
+        }
+    }
+    else if(shell_input[0]=='F'&&shell_input[1]=='A'&&
+            shell_input[2]=='T'&&shell_input[3]=='C'&&
+            shell_input[4]=='A'&&shell_input[5]=='T'&&
+            shell_input[6]==' '){
+        if(!nova_disk_fat16.mounted)shell_result("NO READABLE FAT16 VOLUME");
+        else{
+            struct nova_fat_file file;
+            if(!nova_fat16_find(&nova_disk_fat16,shell_input+7,&file))
+                shell_result("FAT16 FILE NOT FOUND");
+            else if(file.size>90)shell_result("FILE TOO LARGE FOR TERMINAL (MAX 90 BYTES)");
+            else {
+                uint8_t bytes[91];
+                if(!nova_fat16_read(&nova_disk_fat16,&file,0,bytes,file.size))
+                    shell_result("FAT16 READ ERROR");
+                else{
+                    for(uint32_t i=0;i<file.size;i++)
+                        if(bytes[i]<32||bytes[i]>126)bytes[i]='.';
+                    bytes[file.size]=0;
+                    shell_result((const char*)bytes);
+                }
+            }
+        }
     }
     else if(nova_file_equal(shell_input,"CLEAR")){
         for(int i=0;i<3;i++)shell_output[i][0]=0;
@@ -854,6 +903,9 @@ void kmain(void){
     if(nova_ata_probe()){
         serial_log("NOVA_ATA_PRIMARY_DETECTED\n");
         serial_log(nova_ata_readonly_selftest()?"NOVA_ATA_READ0_OK\n":"NOVA_ATA_READ0_FAILED\n");
+        if(nova_fat16_mount(&nova_disk_fat16,nova_disk_sector_read,NULL,nova_ata.sectors))
+            serial_log("NOVA_FAT16_READONLY_MOUNTED\n");
+        else serial_log("NOVA_FAT16_NOT_FOUND\n");
     }else serial_log("NOVA_ATA_NO_DISK\n");
     bool jobs_ready=nova_job_add("HEARTBEAT",nova_job_heartbeat);
     jobs_ready=jobs_ready && nova_job_add("MEMORY",nova_job_memory_poll);
