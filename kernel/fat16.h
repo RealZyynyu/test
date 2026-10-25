@@ -108,6 +108,7 @@ static bool nova_fat16_entry(const struct nova_fat16 *fs,size_t position,
     for(uint32_t s=0;s<fs->root_sectors;s++){
         if(!nova_fat_disk_read(fs,fs->root_sector+s,sec))return false;
         for(unsigned i=0;i<16;i++){
+            if((uint64_t)s*16u+i>=fs->root_entries)return false;
             const uint8_t *p=sec+32u*i;
             if(p[0]==0)return false; /* End of directory */
             if(p[0]==0xE5||p[0]==0x05||(p[11]&0x08)||
@@ -141,9 +142,14 @@ static bool nova_fat16_find(const struct nova_fat16 *fs,const char *name,
     }
     return false;
 }
+static bool nova_fat16_valid_cluster(const struct nova_fat16 *fs,uint16_t cluster){
+    /* 0xFFF0-0xFFFF are reserved/bad/end-of-chain identifiers. */
+    return cluster>=2u && cluster<0xFFF0u &&
+           (uint32_t)cluster<fs->cluster_count+2u;
+}
 static bool nova_fat16_next(const struct nova_fat16 *fs,uint16_t cluster,
                             uint16_t *next){
-    if(cluster<2||(uint32_t)cluster>=fs->cluster_count+2u)return false;
+    if(!nova_fat16_valid_cluster(fs,cluster)||!next)return false;
     uint32_t fat_offset=(uint32_t)cluster*2u;
     uint32_t sector=fat_offset/512u;
     if(sector>=fs->fat_sectors)return false;
@@ -160,22 +166,22 @@ static bool nova_fat16_read(const struct nova_fat16 *fs,
     if(!fs||!fs->mounted||!file||(!out&&length))return false;
     if(offset>file->size||(uint64_t)offset+length>file->size)return false;
     if(!length)return true;
-    if(file->first_cluster<2)return false;
+    if(!nova_fat16_valid_cluster(fs,file->first_cluster))return false;
     uint32_t cluster_bytes=(uint32_t)fs->sectors_per_cluster*512u;
     uint32_t skip=offset/cluster_bytes;
     if(skip>=fs->cluster_count)return false;
     uint16_t cluster=file->first_cluster;
     for(uint32_t i=0;i<skip;i++){
         uint16_t next;
-        if(!nova_fat16_next(fs,cluster,&next)||next<2||
-           (uint32_t)next>=fs->cluster_count+2u)return false;
+        if(!nova_fat16_next(fs,cluster,&next)||
+           !nova_fat16_valid_cluster(fs,next))return false;
         cluster=next;
     }
     size_t written=0;
     uint32_t inner=offset%cluster_bytes;
     uint32_t traversed=0;
     while(written<length){
-        if(cluster<2||(uint32_t)cluster>=fs->cluster_count+2u||
+        if(!nova_fat16_valid_cluster(fs,cluster)||
            ++traversed>fs->cluster_count)return false;
         uint32_t sector_index=inner/512u;
         for(;sector_index<fs->sectors_per_cluster&&written<length;sector_index++){
@@ -190,8 +196,8 @@ static bool nova_fat16_read(const struct nova_fat16 *fs,
         }
         if(written<length){
             uint16_t next;
-            if(!nova_fat16_next(fs,cluster,&next)||next<2||
-               (uint32_t)next>=fs->cluster_count+2u)return false;
+            if(!nova_fat16_next(fs,cluster,&next)||
+               !nova_fat16_valid_cluster(fs,next))return false;
             cluster=next;
         }
     }
