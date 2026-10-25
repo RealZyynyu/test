@@ -61,6 +61,20 @@ class TestNativeSafetyDefaults(unittest.TestCase):
             r"(?:wrmsr|ltr)\s*[;\n])"
         )
 
+    def test_staged_apps_default_deny_and_never_modify_disk(self):
+        caps = self.text("kernel/capabilities.h")
+        main = self.text("kernel/main.c")
+        self.assertIn("NOVA_CAP_IMPLEMENTED", caps)
+        self.assertIn("NOVA_CAP_RAM_READ|NOVA_CAP_RAM_WRITE|NOVA_CAP_DISK_READ", caps)
+        self.assertIn("nova_cap_mask_valid(mask)", caps)
+        self.assertIn("nova_cap_grant_trusted", caps)
+        self.assertIn("vol==NOVA_VFS_RAM?NOVA_CAP_RAM_WRITE:0", caps)
+        self.assertIn("f->protected", caps)
+        self.assertIn("nova_cap_register(&nova_app_policy,&nova_processes,pid)", main)
+        self.assertIn("nova_cap_unregister(&nova_app_policy,pid)", main)
+        self.assertNotIn("nova_cap_grant_trusted(", main)
+        self.assertNotIn("NOVA_CAP_DISK_WRITE", caps)
+
     def test_game_controls_are_a_nonprivileged_adapter(self):
         controls = self.text("kernel/game_input.h")
         self.assertIn("NOVA_GAME_CONTROLLER", controls)
