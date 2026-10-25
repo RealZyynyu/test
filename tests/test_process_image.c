@@ -338,7 +338,6 @@ static void test_physical_identity_rechecked_on_drop_and_stage(void){
     struct nova_process_image *p=nova_process_find(&table,pid);
     assert(p && active_pages==3);
     uint8_t *saved[3]={p->pages[0].frame,p->pages[1].frame,p->pages[2].frame};
-    const uint64_t original=p->pages[0].physical_page;
     assert(!nova_process_drop(&table,pid,free_page,NULL,NULL));
     assert(nova_process_find(&table,pid)==p && active_pages==3);
     p->pages[0].physical_page=p->pages[1].physical_page;
@@ -350,14 +349,14 @@ static void test_physical_identity_rechecked_on_drop_and_stage(void){
     assert(stage(&table,&pid)==NOVA_PROCESS_OK);
     p=nova_process_find(&table,pid);
     assert(p);
-    p->pages[0].physical_page=UINT64_C(0x200000); /* correct initially */
+    uint8_t *before_drop[3]={p->pages[0].frame,p->pages[1].frame,
+                              p->pages[2].frame};
     struct physical_fault changed={.target=p->pages[0].frame,
                                    .reported=UINT64_C(0x210000)};
     assert(!nova_process_drop(&table,pid,free_page,faulty_physical,&changed));
-    assert(active_pages==3);
-    for(unsigned i=0;i<3;i++)free_page(NULL,p->pages[i].frame);
+    assert(active_pages==3 && nova_process_find(&table,pid)==NULL);
+    for(unsigned i=0;i<3;i++)free_page(NULL,before_drop[i]);
     assert(active_pages==0);
-    (void)original;
 
     assert(stage(&table,&pid)==NOVA_PROCESS_OK);
     p=nova_process_find(&table,pid);
