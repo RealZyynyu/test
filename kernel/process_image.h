@@ -284,6 +284,19 @@ static inline bool nova_process_drop_guarded(
 }
 /* Before zeroing/copying a candidate frame, reject pointer and physical
  * aliases against the current image and all staged foreign images. */
+static inline bool nova_process_owner_tombstone_valid(
+    const struct nova_process_image *image){
+    if(!image||!image->staged||!image->guarded||
+       !image->owner_retirement_pending||!image->owner||!image->pid||
+       image->page_count||image->entry||image->segments||image->label[0])
+        return false;
+    for(uint32_t i=0;i<NOVA_PROCESS_MAX_PAGES;i++){
+        const struct nova_process_page *p=&image->pages[i];
+        if(p->virtual_page||p->frame||p->physical_page||p->generation||p->flags)
+            return false;
+    }
+    return true;
+}
 /* Release an owner-bound image and retire its PMM owner as one retryable
  * lifecycle operation. If retirement fails after all image frames are gone,
  * retain a zero-page tombstone in the same slot; PDROP can retry retirement
@@ -297,7 +310,7 @@ static inline bool nova_process_drop_owned_guarded(
     if(!image||!image->staged||!image->guarded||!image->owner)return false;
     const uint64_t owner=image->owner;
     if(image->owner_retirement_pending){
-        if(image->page_count!=0)return false;
+        if(!nova_process_owner_tombstone_valid(image))return false;
         if(!retire_owner(ctx,owner))return false;
         *image=(struct nova_process_image){0};
         return true;
