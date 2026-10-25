@@ -62,6 +62,22 @@ jobs:
             -fsanitize=undefined -fno-sanitize-recover=all \
             tests/test_elf_vfs.c -o /tmp/nova-elf-vfs-ubsan
           /tmp/nova-elf-vfs-ubsan
+  staged-images:
+    name: Staged process image and memory lifecycle tests (no execution)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test staged ELF PT_LOAD images with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_process_image.c -o /tmp/nova-process-test
+          /tmp/nova-process-test
+      - name: Test process image allocation and rollback with sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_process_image.c -o /tmp/nova-process-test-sanitized
+          /tmp/nova-process-test-sanitized
   fat16:
     name: Read-only FAT16 host tests
     runs-on: ubuntu-24.04
