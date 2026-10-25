@@ -16,6 +16,7 @@
 #include "cpu.h"
 #include "ata.h"
 #include "fat16.h"
+#include "vfs.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -155,6 +156,7 @@ static uint64_t nova_heartbeats=0;
 static uint32_t nova_last_free_pages=0;
 static bool nova_pmm_test_ok=false;
 static struct nova_fat16 nova_disk_fat16;
+static struct nova_vfs nova_vfs_state={.disk=&nova_disk_fat16};
 
 static char shell_input[64]="";
 static unsigned shell_len=0;
@@ -609,7 +611,7 @@ static bool nova_disk_sector_read(void *context,uint32_t lba,uint8_t out[512]){
 }
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("HELP LS CAT FATLS FATCAT FATSTAT DISK TOUCH RM WRITE");
+        shell_result("VLS VCAT VSTAT VTOUCH VWRITE VRM / HELP FATLS DISK");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -692,6 +694,69 @@ static void shell_execute(void){
                     shell_result((const char*)bytes);
                 }
             }
+        }
+    }
+    else if(shell_input[0]=='V'&&shell_input[1]=='L'&&
+            shell_input[2]=='S'&&shell_input[3]==' '){
+        char list[100]="";
+        for(size_t i=0;i<6;i++){
+            struct nova_vfs_entry entry;
+            if(!nova_vfs_list(&nova_vfs_state,shell_input+4,i,&entry))break;
+            if(list[0])nova_append_text(list,sizeof(list)," ");
+            nova_append_text(list,sizeof(list),entry.name);
+        }
+        shell_result(list[0]?list:"NO FILES OR VOLUME UNAVAILABLE");
+    }
+    else if(shell_input[0]=='V'&&shell_input[1]=='C'&&
+            shell_input[2]=='A'&&shell_input[3]=='T'&&shell_input[4]==' '){
+        uint32_t file_size=0;bool ro=false;
+        if(!nova_vfs_size(&nova_vfs_state,shell_input+5,&file_size,&ro))
+            shell_result("FILE NOT FOUND");
+        else if(file_size>90)shell_result("FILE TOO LARGE (MAX 90 BYTES)");
+        else{
+            uint8_t bytes[91];
+            if(!nova_vfs_read(&nova_vfs_state,shell_input+5,0,bytes,file_size))
+                shell_result("FILE READ ERROR");
+            else{
+                for(uint32_t i=0;i<file_size;i++)
+                    if(bytes[i]<32||bytes[i]>126)bytes[i]='.';
+                bytes[file_size]=0;
+                shell_result((const char*)bytes);
+            }
+        }
+    }
+    else if(shell_input[0]=='V'&&shell_input[1]=='S'&&
+            shell_input[2]=='T'&&shell_input[3]=='A'&&
+            shell_input[4]=='T'&&shell_input[5]==' '){
+        uint32_t size=0;bool ro=false;
+        if(!nova_vfs_size(&nova_vfs_state,shell_input+6,&size,&ro))
+            shell_result("FILE NOT FOUND");
+        else nova_show_metric(ro?"READ-ONLY SIZE: ":"RAM FILE SIZE: ",size,NULL,0);
+    }
+    else if(shell_input[0]=='V'&&shell_input[1]=='T'&&
+            shell_input[2]=='O'&&shell_input[3]=='U'&&
+            shell_input[4]=='C'&&shell_input[5]=='H'&&shell_input[6]==' '){
+        shell_result(nova_vfs_create(&nova_vfs_state,shell_input+7)?
+            "RAM FILE CREATED":"CREATE DENIED OR FILE EXISTS");
+    }
+    else if(shell_input[0]=='V'&&shell_input[1]=='R'&&
+            shell_input[2]=='M'&&shell_input[3]==' '){
+        bool ok=nova_vfs_remove(&nova_vfs_state,shell_input+4);
+        if(ok){file_open=-1;finder_page=0;}
+        shell_result(ok?"RAM FILE DELETED":"REMOVE DENIED OR NOT FOUND");
+    }
+    else if(shell_input[0]=='V'&&shell_input[1]=='W'&&
+            shell_input[2]=='R'&&shell_input[3]=='I'&&
+            shell_input[4]=='T'&&shell_input[5]=='E'&&shell_input[6]==' '){
+        char *path=shell_input+7;
+        char *content=path;
+        while(*content&&*content!=' ')content++;
+        if(!*content)shell_result("USAGE: VWRITE RAM:/FILE.TXT TEXT");
+        else{
+            *content++=0;
+            size_t length=0;while(content[length])length++;
+            shell_result(nova_vfs_write(&nova_vfs_state,path,(const uint8_t*)content,length)?
+                "RAM FILE UPDATED":"WRITE DENIED (DISK IS READ-ONLY)");
         }
     }
     else if(nova_file_equal(shell_input,"CLEAR")){
@@ -919,6 +984,7 @@ void kmain(void){
     struct nova_file *initial=nova_file_find("NOTES.TXT");
     if(initial)serial_log("NOVA_RAMFS_READY\n");
     serial_log(nova_ramfs_self_test()?"NOVA_RAMFS_SELFTEST_OK\n":"NOVA_RAMFS_SELFTEST_FAILED\n");
+    serial_log("NOVA_VFS_READY\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
         // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
