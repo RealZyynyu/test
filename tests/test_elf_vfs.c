@@ -8,6 +8,7 @@
 #include <string.h>
 #include "../kernel/vfs.h"
 #include "../kernel/elf64.h"
+#include "../kernel/process_image.h"
 #define DISK_SECTORS 16384u
 #define ELF_FILE_BYTES 8320u
 #define DATA_SECTOR 67u
@@ -67,6 +68,28 @@ static bool read_elf_vfs(void *context,uint64_t offset,uint8_t *out,size_t lengt
     if(offset>SIZE_MAX)return false;
     return nova_vfs_read(x->vfs,"DISK:/APP.ELF",(size_t)offset,out,length);
 }
+/* Synthetic physical-frame allocator for the end-to-end stage test. */
+static uint8_t staged_frames[4][4096];
+static bool staged_used[4];
+static unsigned staged_count=0;
+static void *stage_alloc(void *ctx){
+    (void)ctx;
+    for(unsigned i=0;i<4;i++)if(!staged_used[i]){
+        staged_used[i]=true;staged_count++;
+        memset(staged_frames[i],0xBF,4096);
+        return staged_frames[i];
+    }
+    return NULL;
+}
+static void stage_free(void *ctx,void *page){
+    (void)ctx;
+    for(unsigned i=0;i<4;i++)if(page==staged_frames[i]){
+        assert(staged_used[i]);
+        staged_used[i]=false;staged_count--;return;
+    }
+    assert(!"invalid test frame");
+}
+
 int main(void){
     assert(nova_ramfs_self_test());
     image_fixture();
@@ -87,6 +110,19 @@ int main(void){
     assert(info.entry==0x401000&&info.load_count==2&&info.pages==2);
     assert(!strcmp(nova_elf_result_name(NOVA_ELF_OK),"VALID STATIC ELF64 (NOT EXECUTED)"));
     assert(!nova_vfs_write(&vfs,"DISK:/APP.ELF",(const uint8_t*)"X",1));
+    /* ELF -> FAT16 -> VFS -> isolated physical frames; no instruction execution. */
+    struct nova_process_table table={0};
+    uint32_t pid=0;
+    assert(nova_process_stage(&table,"DISK:/APP.ELF",
+        read_elf_vfs,&ctx,file_bytes,stage_alloc,stage_free,NULL,&pid)==NOVA_PROCESS_OK);
+    assert(pid==1 && staged_count==2 && nova_process_count(&table)==1);
+    struct nova_process_image *process=nova_process_find(&table,pid);
+    assert(process && process->entry==0x401000 && process->page_count==2);
+    uint8_t fetched[12];
+    assert(nova_process_peek(process,0x402080,fetched,sizeof(fetched)));
+    for(size_t i=0;i<sizeof(fetched);i++)assert(fetched[i]==0); /* zeroed BSS */
+    assert(nova_process_drop(&table,pid,stage_free,NULL));
+    assert(staged_count==0 && nova_process_count(&table)==0);
     /* File metadata can be located, but disk modification remains forbidden. */
     uint8_t *second_ph=elf_byte(120);
     uint32_t old_flags=nova_elf_u32(second_ph+4);
@@ -100,6 +136,6 @@ int main(void){
     struct nova_vfs empty={.disk=NULL};
     struct elf_vfs_ctx no_disk={.vfs=&empty};
     assert(nova_elf64_probe(read_elf_vfs,&no_disk,file_bytes,&info)==NOVA_ELF_IO_ERROR);
-    puts("ELF64 + FAT16 + VFS: end-to-end read-only program inspection tests passed.");
+    puts("ELF64 + FAT16 + VFS + staged frames: read-only integration and cleanup tests passed.");
     return 0;
 }
