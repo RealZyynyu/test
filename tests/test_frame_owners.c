@@ -71,6 +71,7 @@ static void test_owner_separation_and_legacy_denial(void){
     unchanged(ram[0],0);
     assert(nova_page_free_ticket(&b));
     assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
+    assert(nova_pmm_self_test()); /* legacy self-test remains available */
 }
 static void test_owner_reuse_and_generation(void){
     setup();
