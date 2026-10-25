@@ -109,6 +109,7 @@ static void verify(uint32_t partition_start){
 }
 
 static void verify_vfs(void){
+    assert(nova_ramfs_self_test());
     fixture(0);
     struct nova_fat16 diskfs;
     assert(nova_fat16_mount(&diskfs,memory_reader,NULL,SECTORS));
