@@ -61,6 +61,10 @@ struct nova_page_table {
     uint64_t protected_physical[NOVA_PROCESS_MAX_PAGES];
     /* Reject aliases between leaf PTEs, including RX/RW dual mappings. */
     uint64_t mapped_physical[NOVA_PT_MAX_MAPPED_PAGES];
+    /* Temporary reservation while a new stack leaf is mapped. A new page
+     * table must never borrow/zero that not-yet-installed leaf frame. */
+    void *pending_leaf_frame;
+    uint64_t pending_leaf_physical;
     void *tables[NOVA_PT_MAX_TABLES];
     uint64_t table_physical[NOVA_PT_MAX_TABLES];
     bool prepared;
@@ -96,33 +100,28 @@ static inline enum nova_pt_result nova_pt_new_table(
     if(tree->tables_used>=NOVA_PT_MAX_TABLES)return NOVA_PT_RESOURCE_LIMIT;
     void *page=ops->allocate(ops->context);
     if(!page)return NOVA_PT_OUT_OF_MEMORY;
+    /* First check pointer identity, before invoking an unreliable physical
+     * address callback or freeing anything. Borrowed frames are NOT ours. */
+    for(uint16_t i=0;i<tree->tables_used;i++)
+        if(tree->tables[i]==page)return NOVA_PT_BAD_FRAME;
+    for(uint16_t i=0;i<tree->protected_count;i++)
+        if(tree->protected_frames[i]==page)return NOVA_PT_BAD_FRAME;
+    if(tree->pending_leaf_frame==page)return NOVA_PT_BAD_FRAME;
     uint64_t phys=0;
     if(!ops->physical_address(ops->context,page,&phys)||
        !nova_pt_valid_phys(phys)||((uintptr_t)page&7u)!=0){
-        ops->release(ops->context,page);
+        /* Cannot establish ownership of a suspect allocation. Releasing it
+         * could double-free an image/stack frame through a faulty callback.
+         * Fail closed, potentially leaking the suspect frame instead. */
         return NOVA_PT_BAD_FRAME;
     }
-    for(uint16_t i=0;i<tree->tables_used;i++){
-        if(tree->table_physical[i]==phys || tree->tables[i]==page){
-            /* A broken allocator must not return an already-owned frame.
-             * Do not double-free the existing frame. */
-            return NOVA_PT_BAD_FRAME;
-        }
-    }
-    for(uint16_t i=0;i<tree->protected_count;i++){
-        if(tree->protected_physical[i]==phys ||
-           tree->protected_frames[i]==page){
-            /* Ownership belongs to the staged image, not the page tables.
-             * Never zero or release this possibly aliased frame. */
-            return NOVA_PT_BAD_FRAME;
-        }
-    }
-    for(uint16_t i=0;i<tree->mapped_pages;i++){
-        if(tree->mapped_physical[i]==phys){
-            /* A new table may not overwrite an existing leaf frame. */
-            return NOVA_PT_BAD_FRAME;
-        }
-    }
+    for(uint16_t i=0;i<tree->tables_used;i++)
+        if(tree->table_physical[i]==phys)return NOVA_PT_BAD_FRAME;
+    for(uint16_t i=0;i<tree->protected_count;i++)
+        if(tree->protected_physical[i]==phys)return NOVA_PT_BAD_FRAME;
+    for(uint16_t i=0;i<tree->mapped_pages;i++)
+        if(tree->mapped_physical[i]==phys)return NOVA_PT_BAD_FRAME;
+    if(tree->pending_leaf_physical==phys)return NOVA_PT_BAD_FRAME;
     uint64_t *entries=(uint64_t *)page;
     for(size_t i=0;i<512;i++)entries[i]=0;
     uint16_t n=tree->tables_used++;
