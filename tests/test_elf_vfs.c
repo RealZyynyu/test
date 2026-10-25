@@ -73,6 +73,11 @@ int main(void){
     struct nova_fat16 fat16;
     assert(nova_fat16_mount(&fat16,read_sector,NULL,DISK_SECTORS));
     struct nova_vfs vfs={.disk=&fat16};
+    struct nova_vfs_entry entry;
+    assert(nova_vfs_list(&vfs,"DISK:/",0,&entry));
+    assert(!strcmp(entry.name,"APP.ELF")&&entry.read_only);
+    assert(nova_vfs_create(&vfs,"RAM:/SCRATCH.TXT"));
+    assert(nova_vfs_remove(&vfs,"RAM:/SCRATCH.TXT"));
     struct elf_vfs_ctx ctx={.vfs=&vfs};
     uint32_t file_bytes=0;bool read_only=false;
     assert(nova_vfs_size(&vfs,"DISK:/APP.ELF",&file_bytes,&read_only));
@@ -80,6 +85,7 @@ int main(void){
     struct nova_elf_info info;
     assert(nova_elf64_probe(read_elf_vfs,&ctx,file_bytes,&info)==NOVA_ELF_OK);
     assert(info.entry==0x401000&&info.load_count==2&&info.pages==2);
+    assert(!strcmp(nova_elf_result_name(NOVA_ELF_OK),"VALID STATIC ELF64 (NOT EXECUTED)"));
     assert(!nova_vfs_write(&vfs,"DISK:/APP.ELF",(const uint8_t*)"X",1));
     /* File metadata can be located, but disk modification remains forbidden. */
     uint8_t *second_ph=elf_byte(120);
