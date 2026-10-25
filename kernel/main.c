@@ -408,7 +408,7 @@ static void app_content(void){
         circle(450,325,21,21,0xE8F2FF);
         text(443,314,"N",3,0x648ECA);
         text(507,299,"NOVA OS",3,night?0xFFFFFF:0x2D4F9A);
-        text(510,354,"Your desktop. Your rules.",1,night?0xD2DFF9:0x637BA4);
+        text(510,354,"Simple desktop. Safety first. Gaming later.",1,night?0xD2DFF9:0x637BA4);
         roundrect(396,421,321,139,16,pale);
         roundrect(736,421,329,139,16,pale);
         text(420,446,"Finder",2,fg);
@@ -454,7 +454,7 @@ static void app_content(void){
         circle(940,418,88,73,0x7562AF);
         text(437,480,"LIGHT",1,0x3C588B);
         text(757,480,"DARK",1,0xEDF1FF);
-        text(421,551,"Press T to toggle appearance.",1,secondary);
+        text(421,551,"T: appearance.  P: pause game in Arcade.",1,secondary);
     }else if(screen==5){
         text(398,191,"ABOUT THIS NOVA",2,fg);
         text(399,230,"An independent operating system project.",1,secondary);
@@ -463,17 +463,17 @@ static void app_content(void){
         circle(459,330,24,24,0xE5F0FE);
         text(449,318,"N",4,0x5787CB);
         text(519,297,"NOVA OS",3,fg);
-        text(522,352,"NATIVE 0.3  -  X86-64",1,secondary);
+        text(522,352,"NATIVE DEVELOPMENT  -  X86-64",1,secondary);
         rect(423,403,613,1,night?0x53617B:0xD6DEED);
         text(423,430,"KERNEL         NOVA NATIVE",1,fg);
-        text(423,457,"BOOTLOADER     LIMINE",1,fg);
-        text(423,484,"GRAPHICS       FRAMEBUFFER",1,fg);
+        text(423,457,"SECURITY       IN DEVELOPMENT",1,fg);
+        text(423,484,"GAMING         ARCADE ONLY",1,fg);
         text(423,511,"INPUT          KEYBOARD + PS2 MOUSE",1,fg);
         text(423,550,"Physical pages:",1,secondary);
         number(580,548,(unsigned)nova_pmm.pages,1,fg);
         text(650,550,"PCI devices:",1,secondary);
         number(758,548,(unsigned)nova_pci.devices,1,fg);
-        text(405,608,"1-7: APPS   ESC: HOME   T: THEME   MOUSE: CLICK",1,secondary);
+        text(405,608,"EXPERIMENTAL VM KERNEL - NOT READY FOR DAILY USE",1,secondary);
 
     }else if(screen==6){
         text(402,192,"TERMINAL",3,fg);
