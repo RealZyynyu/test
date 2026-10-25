@@ -57,6 +57,29 @@ Wiederholungsversuch. Legacy-Freigabe-Callbacks mit `void` können Fehler
 prinzipbedingt nicht melden; der native Eigentümerpfad verwendet boolesche
 PMM-Ticket-Callbacks.
 
+## Retrybare Eigentümerstilllegung
+
+Die Freigabe aller Image-Frames und die Stilllegung des PMM-Eigentümers sind zwei
+getrennte Operationen: `nova_owner_retire()` verweigert die Stilllegung, solange
+noch irgendein Frame diesem Eigentümer gehört. Wenn die Image-Frames bereits
+freigegeben sind, ein zusätzlicher oder verwaister Frame aber noch existiert,
+darf der Prozessdeskriptor deshalb nicht einfach verschwinden.
+
+`nova_process_drop_owned_guarded()` hält in diesem Fall einen expliziten
+`owner_retirement_pending`-Tombstone mit PID und Eigentümer-ID im bisherigen
+Prozessslot. Dieser Tombstone enthält keine Image-Frames und wird nicht erneut
+als ausführbares Image freigegeben. `PDROP` versucht beim nächsten Aufruf nur noch
+die Eigentümerstilllegung. Der Slot wird erst gelöscht, wenn die Stilllegung
+erfolgreich ist. Dieselbe zentrale Teardown-Routine wird für Setup-Rollbacks
+verwendet; fehlgeschlagene Stack-/Tabellenfreigaben stoppen den Rollback, bevor
+Image-Frames oder der Eigentümer freigegeben werden.
+
+Die Host-Regression `test_retryable_owner_retirement` hält absichtlich einen
+zusätzlichen, owner-markierten Frame zurück. Sie prüft, dass die erste Stilllegung
+fehlschlägt, der Tombstone erhalten bleibt, der fremde Frame unberührt bleibt und
+ein späterer `PDROP`-Versuch nach Freigabe des Orphan-Frames den Eigentümer und
+Prozessslot korrekt entfernt.
+
 ## Verbleibende Grenzen
 
 Ein Callback muss garantieren, dass `false` bedeutet: der aktuelle Frame
