@@ -26,6 +26,9 @@
 
 typedef void *(*nova_process_alloc_fn)(void *ctx);
 typedef void (*nova_process_free_fn)(void *ctx,void *page);
+/* Trusted allocator callback: translates an allocated frame to its physical
+ * page address. Pointer disjointness alone cannot detect HHDM aliases. */
+typedef bool (*nova_process_phys_fn)(void *ctx,const void *page,uint64_t *physical);
 enum nova_process_result {
     NOVA_PROCESS_OK=0,
     NOVA_PROCESS_BAD_INPUT,
@@ -39,6 +42,7 @@ enum nova_process_result {
 struct nova_process_page {
     uint64_t virtual_page;
     uint8_t *frame; /* physical memory viewed through HHDM; NOT ring-3 mapping */
+    uint64_t physical_page; /* validated physical identity at allocation */
     uint32_t flags;
 };
 struct nova_process_image {
@@ -93,50 +97,72 @@ static inline struct nova_process_image *nova_process_find(
             return &table->slots[i];
     return NULL;
 }
-/* A newly returned 4-KiB frame must not overlap any already owned
- * frame, even if a buggy allocator returns an interior pointer. Compare
- * address differences rather than adding 4096 (which could wrap).
- * This proves only virtual-pointer disjointness, not physical identity. */
+/* Pointer overlap is only a preliminary check. A trusted PMM-backed
+ * physical-address callback is REQUIRED for staging and release. Distinct
+ * virtual addresses may refer to the same physical frame. */
 static inline bool nova_process_frame_overlaps(const void *a,const void *b){
     if(!a||!b)return false;
     uintptr_t x=(uintptr_t)a,y=(uintptr_t)b;
     return x>=y ? x-y<4096u : y-x<4096u;
 }
-/* Check an entire release set BEFORE freeing the first page. A corrupt
- * count or duplicate frame must not produce OOB access or double-free.
- * The optional process table also protects frames of other staged images.
- * Unverifiable frames are deliberately leaked, not released. */
+static inline bool nova_process_valid_physical(uint64_t phys){
+    /* Match the address field of an x86-64 4-KiB PTE. */
+    return phys!=0 && (phys&UINT64_C(0xFFF))==0 &&
+           (phys&~UINT64_C(0x000FFFFFFFFFF000))==0;
+}
+static inline bool nova_process_page_identity_valid(
+    const struct nova_process_page *page,nova_process_phys_fn physical,
+    void *context){
+    uint64_t observed=0;
+    return page && page->frame && physical &&
+           ((uintptr_t)page->frame&4095u)==0 &&
+           nova_process_valid_physical(page->physical_page) &&
+           physical(context,page->frame,&observed) &&
+           observed==page->physical_page;
+}
+/* Validate the entire release set before the FIRST free. A forged physical
+ * identity, duplicate physical frame or foreign image alias fails closed.
+ * Suspect frames are intentionally leaked instead of possibly freeing a
+ * different image's memory. This is NOT an authenticated ownership ledger. */
 static inline bool nova_process_frames_releasable(
     const struct nova_process_image *image,
-    const struct nova_process_table *table){
-    if(!image||image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
+    const struct nova_process_table *table,
+    nova_process_phys_fn physical,void *context){
+    if(!image||!physical||image->page_count>NOVA_PROCESS_MAX_PAGES)
+        return false;
     for(uint32_t i=0;i<image->page_count;i++){
-        const void *frame=image->pages[i].frame;
-        if(!frame||((uintptr_t)frame&4095u)!=0)return false;
+        const struct nova_process_page *page=&image->pages[i];
+        if(!nova_process_page_identity_valid(page,physical,context))
+            return false;
         for(uint32_t j=0;j<i;j++)
-            if(nova_process_frame_overlaps(frame,image->pages[j].frame))
+            if(nova_process_frame_overlaps(page->frame,image->pages[j].frame)||
+               page->physical_page==image->pages[j].physical_page)
                 return false;
         if(table){
             for(uint32_t slot=0;slot<NOVA_PROCESS_SLOTS;slot++){
                 const struct nova_process_image *other=&table->slots[slot];
                 if(other==image||!other->staged)continue;
                 if(other->page_count>NOVA_PROCESS_MAX_PAGES)return false;
-                for(uint32_t j=0;j<other->page_count;j++)
-                    if(!other->pages[j].frame ||
-                       nova_process_frame_overlaps(frame,other->pages[j].frame))
+                for(uint32_t j=0;j<other->page_count;j++){
+                    const struct nova_process_page *foreign=&other->pages[j];
+                    if(!nova_process_page_identity_valid(foreign,physical,context)||
+                       nova_process_frame_overlaps(page->frame,foreign->frame)||
+                       page->physical_page==foreign->physical_page)
                         return false;
+                }
             }
         }
     }
     return true;
 }
-/* The return value reports whether any owned pages were safely released.
- * On corrupted metadata discard the image descriptor without freeing
- * suspicious frames; callers must not treat this as a successful drop. */
-static inline bool nova_process_release_image(struct nova_process_image *image,
-                        nova_process_free_fn free_page,void *ctx){
+/* The return value reports whether all owned pages were safely released.
+ * On corrupt metadata the descriptor is cleared without freeing anything.
+ * Callers must not interpret a failed release as reclaimed memory. */
+static inline bool nova_process_release_image(
+    struct nova_process_image *image,const struct nova_process_table *table,
+    nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx){
     if(!image)return false;
-    bool safe=free_page && nova_process_frames_releasable(image,NULL);
+    bool safe=free_page && nova_process_frames_releasable(image,table,physical,ctx);
     if(safe){
         for(uint32_t i=0;i<image->page_count;i++)
             free_page(ctx,image->pages[i].frame);
@@ -145,37 +171,45 @@ static inline bool nova_process_release_image(struct nova_process_image *image,
     return safe;
 }
 static inline bool nova_process_drop(struct nova_process_table *table,
-             uint32_t pid,nova_process_free_fn free_page,void *ctx){
-    if(!free_page)return false;
+    uint32_t pid,nova_process_free_fn free_page,
+    nova_process_phys_fn physical,void *ctx){
+    if(!free_page||!physical)return false;
     struct nova_process_image *image=nova_process_find(table,pid);
     if(!image)return false;
-    if(!nova_process_frames_releasable(image,table)){
-        *image=(struct nova_process_image){0};
-        return false;
-    }
-    return nova_process_release_image(image,free_page,ctx);
+    return nova_process_release_image(image,table,free_page,physical,ctx);
 }
-/* Reject borrowed/overlapping allocator results BEFORE clearing any bytes.
- * Include other staged processes, not just the image being constructed. */
+/* Check a newly returned frame BEFORE zeroing it or copying ELF bytes.
+ * Reject physical aliases across this image and all other staged images,
+ * even when pointers differ. Also verify cached identities of existing
+ * pages against the current trusted PMM callback. */
 static inline bool nova_process_frame_available(
     const struct nova_process_table *table,
-    const struct nova_process_image *current,const void *frame){
-    if(!frame||!table||!current||((uintptr_t)frame&4095u)!=0)
-        return false;
-    if(current->page_count>NOVA_PROCESS_MAX_PAGES)return false;
-    for(uint32_t j=0;j<current->page_count;j++)
-        if(!current->pages[j].frame ||
-           nova_process_frame_overlaps(frame,current->pages[j].frame))
-            return false;
+    const struct nova_process_image *current,const void *frame,
+    nova_process_phys_fn physical,void *context,uint64_t *physical_out){
+    if(!frame||!table||!current||!physical||!physical_out||
+       ((uintptr_t)frame&4095u)!=0||
+       current->page_count>NOVA_PROCESS_MAX_PAGES)return false;
+    uint64_t candidate=0;
+    if(!physical(context,frame,&candidate)||
+       !nova_process_valid_physical(candidate))return false;
+    for(uint32_t j=0;j<current->page_count;j++){
+        const struct nova_process_page *page=&current->pages[j];
+        if(!nova_process_page_identity_valid(page,physical,context)||
+           nova_process_frame_overlaps(frame,page->frame)||
+           candidate==page->physical_page)return false;
+    }
     for(uint32_t slot=0;slot<NOVA_PROCESS_SLOTS;slot++){
         const struct nova_process_image *other=&table->slots[slot];
         if(other==current||!other->staged)continue;
         if(other->page_count>NOVA_PROCESS_MAX_PAGES)return false;
-        for(uint32_t j=0;j<other->page_count;j++)
-            if(!other->pages[j].frame ||
-               nova_process_frame_overlaps(frame,other->pages[j].frame))
-                return false;
+        for(uint32_t j=0;j<other->page_count;j++){
+            const struct nova_process_page *page=&other->pages[j];
+            if(!nova_process_page_identity_valid(page,physical,context)||
+               nova_process_frame_overlaps(frame,page->frame)||
+               candidate==page->physical_page)return false;
+        }
     }
+    *physical_out=candidate;
     return true;
 }
 /* Loads into privately allocated physical frames, but does NOT map
@@ -185,9 +219,9 @@ static inline enum nova_process_result nova_process_stage(
         struct nova_process_table *table,const char *label,
         nova_elf_read_fn read_file,void *read_context,uint64_t file_size,
         nova_process_alloc_fn allocate,nova_process_free_fn free_page,
-        void *page_context,uint32_t *pid_out){
+        nova_process_phys_fn physical,void *page_context,uint32_t *pid_out){
     if(pid_out)*pid_out=0;
-    if(!table||!label||!read_file||!allocate||!free_page||!pid_out)
+    if(!table||!label||!read_file||!allocate||!free_page||!physical||!pid_out)
         return NOVA_PROCESS_BAD_INPUT;
     struct nova_elf_info elf;
     if(nova_elf64_probe(read_file,read_context,file_size,&elf)!=NOVA_ELF_OK)
@@ -213,23 +247,26 @@ static inline enum nova_process_result nova_process_stage(
         uint32_t first_index=image->page_count;
         for(uint32_t page=0;page<pages;page++){
             if(image->page_count>=NOVA_PROCESS_MAX_PAGES){
-                nova_process_release_image(image,free_page,page_context);
+                nova_process_release_image(image,table,free_page,physical,page_context);
                 return NOVA_PROCESS_TOO_LARGE;
             }
             uint8_t *frame=(uint8_t*)allocate(page_context);
             if(!frame){
-                (void)nova_process_release_image(image,free_page,page_context);
+                (void)nova_process_release_image(image,table,free_page,physical,page_context);
                 return NOVA_PROCESS_NO_MEMORY;
             }
-            if(!nova_process_frame_available(table,image,frame)){
+            uint64_t frame_phys=0;
+            if(!nova_process_frame_available(table,image,frame,physical,
+                                              page_context,&frame_phys)){
                 /* Borrowed frames are not ours: do not zero or free them. */
-                (void)nova_process_release_image(image,free_page,page_context);
+                (void)nova_process_release_image(image,table,free_page,physical,page_context);
                 return NOVA_PROCESS_BAD_FRAME;
             }
             /* Do not trust the allocator to clear previously used memory. */
             for(uint32_t b=0;b<4096;b++)frame[b]=0;
             struct nova_process_page *p=&image->pages[image->page_count++];
-            p->frame=frame;p->virtual_page=first+(uint64_t)page*4096u;
+            p->frame=frame;p->physical_page=frame_phys;
+            p->virtual_page=first+(uint64_t)page*4096u;
             p->flags=s->flags;
         }
         uint64_t copied=0;
@@ -245,7 +282,7 @@ static inline enum nova_process_result nova_process_stage(
                !nova_elf_read_exact(read_file,read_context,file_size,
                       s->file_offset+copied,image->pages[index].frame+in_page,
                       length)){
-                nova_process_release_image(image,free_page,page_context);
+                nova_process_release_image(image,table,free_page,physical,page_context);
                 return NOVA_PROCESS_READ_ERROR;
             }
             copied+=length;
