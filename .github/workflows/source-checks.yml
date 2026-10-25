@@ -72,6 +72,22 @@ jobs:
             -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_frame_tickets.c -o /tmp/nova-frame-tickets-sanitized
           /tmp/nova-frame-tickets-sanitized
+  frame-owners:
+    name: Owner-tagged PMM tickets (host only, no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify owner separation and legacy denial with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs tests/test_frame_owners.c -o /tmp/nova-frame-owners
+          /tmp/nova-frame-owners
+      - name: Verify owner ledger and ABA with Clang ASan and UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_frame_owners.c -o /tmp/nova-frame-owners-sanitized
+          /tmp/nova-frame-owners-sanitized
   image-tickets:
     name: Staged ELF generation tickets and rollback (no ISO)
     runs-on: ubuntu-24.04

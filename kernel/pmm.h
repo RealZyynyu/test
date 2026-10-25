@@ -36,6 +36,9 @@ struct nova_page_manager {
      * A ticket issued for an old allocation cannot authorize the next.
      * No wraparound: allocation fails closed at the counter limit. */
     uint64_t generations[NOVA_PAGE_POOL_CAP];
+    /* 0 denotes legacy kernel allocations; nonzero IDs are supplied by a
+     * trusted caller and bound to an allocation ticket, NOT to a PID yet. */
+    uint64_t owners[NOVA_PAGE_POOL_CAP];
     uint64_t next_generation;
     bool initialized;
 };
@@ -83,11 +86,13 @@ static bool nova_pmm_metadata_valid(void){
             (nova_pmm.bitmap[i>>3]&(uint8_t)(1u<<(i&7u)))!=0;
         const uint8_t role=nova_pmm.roles[i];
         const uint64_t generation=nova_pmm.generations[i];
+        const uint64_t owner=nova_pmm.owners[i];
         if(occupied){
             if(role<NOVA_FRAME_GENERAL || role>NOVA_FRAME_STACK ||
                generation==0 || generation>=nova_pmm.next_generation)
                 return false;
-        }else if(role!=NOVA_FRAME_FREE || generation!=0)return false;
+        }else if(role!=NOVA_FRAME_FREE || generation!=0 || owner!=0)
+            return false;
     }
     return counted==nova_pmm.in_use;
 }
@@ -126,6 +131,7 @@ static bool nova_pmm_init(volatile struct limine_memmap_response *mm,
     for(size_t i=0;i<NOVA_PAGE_POOL_CAP;i++){
         nova_pmm.roles[i]=NOVA_FRAME_FREE;
         nova_pmm.generations[i]=0;
+        nova_pmm.owners[i]=0;
     }
     nova_pmm.next_generation=1;
     nova_pmm.phys_base=base;
@@ -146,6 +152,7 @@ static void *nova_page_alloc_role(enum nova_frame_role role){
         nova_pmm.bitmap[i>>3]|=mask;
         nova_pmm.roles[i]=(uint8_t)role;
         nova_pmm.generations[i]=nova_pmm.next_generation++;
+        nova_pmm.owners[i]=0; /* pointer-only allocations are unowned */
         nova_pmm.in_use++;
         uintptr_t mapped=(uintptr_t)(nova_pmm.phys_base+(uint64_t)i*NOVA_PAGE_SIZE)+nova_pmm.hhdm_offset;
         uint8_t *page=(uint8_t*)mapped;
@@ -157,7 +164,10 @@ static void *nova_page_alloc_role(enum nova_frame_role role){
 static void *nova_page_alloc(void){
     return nova_page_alloc_role(NOVA_FRAME_GENERAL);
 }
-static bool nova_page_free_role(void *ptr,enum nova_frame_role role){
+/* Only a matching allocation owner may release a frame. The pointer-only
+ * wrapper passes owner 0 and cannot free owner-tagged frames. */
+static bool nova_page_free_owned(void *ptr,enum nova_frame_role role,
+                                 uint64_t owner){
     if(!nova_pmm_role_valid(role)||!ptr||!nova_pmm_metadata_valid())
         return false;
     uintptr_t mapped=(uintptr_t)ptr;
@@ -168,7 +178,8 @@ static bool nova_page_free_role(void *ptr,enum nova_frame_role role){
     uint32_t i=(uint32_t)(delta/NOVA_PAGE_SIZE);
     uint8_t mask=(uint8_t)(1u<<(i&7));
     if(!(nova_pmm.bitmap[i>>3]&mask)||
-       nova_pmm.roles[i]!=(uint8_t)role)return false;
+       nova_pmm.roles[i]!=(uint8_t)role || nova_pmm.owners[i]!=owner)
+        return false;
     /* Erase the released page before making it available to another app.
        Volatile stores prevent the compiler from optimizing the wipe out. */
     volatile uint8_t *bytes=(volatile uint8_t *)ptr;
@@ -176,8 +187,12 @@ static bool nova_page_free_role(void *ptr,enum nova_frame_role role){
     nova_pmm.bitmap[i>>3]=(uint8_t)(nova_pmm.bitmap[i>>3]&~mask);
     nova_pmm.roles[i]=NOVA_FRAME_FREE;
     nova_pmm.generations[i]=0;
+    nova_pmm.owners[i]=0;
     nova_pmm.in_use--;
     return true;
+}
+static bool nova_page_free_role(void *ptr,enum nova_frame_role role){
+    return nova_page_free_owned(ptr,role,0);
 }
 static bool nova_page_free(void *ptr){
     return nova_page_free_role(ptr,NOVA_FRAME_GENERAL);
@@ -193,7 +208,8 @@ static bool nova_pmm_physical(const void *ptr,uint64_t *physical){
     if((delta&(NOVA_PAGE_SIZE-1u))!=0||
        delta/NOVA_PAGE_SIZE>=nova_pmm.pages)return false;
     uint32_t index=(uint32_t)(delta/NOVA_PAGE_SIZE);
-    if(!(nova_pmm.bitmap[index>>3]&(uint8_t)(1u<<(index&7u))))return false;
+    if(!(nova_pmm.bitmap[index>>3]&(uint8_t)(1u<<(index&7u))) ||
+       nova_pmm.owners[index]!=0)return false;
     *physical=nova_pmm.phys_base+(uint64_t)index*NOVA_PAGE_SIZE;
     return true;
 }
@@ -209,7 +225,8 @@ static bool nova_pmm_frame_role(const void *ptr,enum nova_frame_role *out){
     if((delta&(NOVA_PAGE_SIZE-1u))!=0||
        delta/NOVA_PAGE_SIZE>=nova_pmm.pages)return false;
     const uint32_t i=(uint32_t)(delta/NOVA_PAGE_SIZE);
-    if(!(nova_pmm.bitmap[i>>3]&(uint8_t)(1u<<(i&7u))))return false;
+    if(!(nova_pmm.bitmap[i>>3]&(uint8_t)(1u<<(i&7u))) ||
+       nova_pmm.owners[i]!=0)return false;
     *out=(enum nova_frame_role)nova_pmm.roles[i];
     return true;
 }
@@ -226,13 +243,15 @@ static inline bool nova_pmm_physical_role(const void *ptr,enum nova_frame_role r
  * would defeat this check. Existing pointer-only callbacks remain legacy
  * and are NOT protected from same-role ABA reuse by this API.
  *
- * Tickets are NOT per-process identities, cryptographic proofs or a defense
- * against a malicious kernel. The PMM remains single-core/non-reentrant.
+ * An optional nonzero owner ID distinguishes trusted caller allocations.
+ * It is NOT authenticated, assigned to a real process, or a defense against
+ * a malicious kernel. The PMM remains single-core/non-reentrant.
  */
 struct nova_frame_ticket {
     void *frame;
     uint64_t generation;
     enum nova_frame_role role;
+    uint64_t owner; /* 0 for legacy tickets */
 };
 static inline bool nova_pmm_ticket_valid(const struct nova_frame_ticket *ticket){
     if(!ticket || !ticket->frame || !ticket->generation ||
@@ -247,7 +266,8 @@ static inline bool nova_pmm_ticket_valid(const struct nova_frame_ticket *ticket)
     const uint32_t i=(uint32_t)(delta/NOVA_PAGE_SIZE);
     return (nova_pmm.bitmap[i>>3]&(uint8_t)(1u<<(i&7u)))!=0 &&
            nova_pmm.roles[i]==(uint8_t)ticket->role &&
-           nova_pmm.generations[i]==ticket->generation;
+           nova_pmm.generations[i]==ticket->generation &&
+           nova_pmm.owners[i]==ticket->owner;
 }
 static inline bool nova_page_alloc_ticket(enum nova_frame_role role,
                                    struct nova_frame_ticket *out){
@@ -258,18 +278,40 @@ static inline bool nova_page_alloc_ticket(enum nova_frame_role role,
     const uintptr_t base=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;
     const uint32_t i=(uint32_t)(((uintptr_t)frame-base)/NOVA_PAGE_SIZE);
     *out=(struct nova_frame_ticket){
-        .frame=frame,.generation=nova_pmm.generations[i],.role=role
+        .frame=frame,.generation=nova_pmm.generations[i],.role=role,
+        .owner=0
+    };
+    return true;
+}
+/* Owner IDs must be nonzero and come from trusted kernel lifecycle code.
+ * This additive API does not invent or register real process identities. */
+static inline bool nova_page_alloc_owned_ticket(enum nova_frame_role role,
+                                  uint64_t owner,struct nova_frame_ticket *out){
+    if(!out)return false;
+    *out=(struct nova_frame_ticket){0};
+    if(!owner || !nova_pmm_role_valid(role))return false;
+    void *frame=nova_page_alloc_role(role);
+    if(!frame)return false;
+    const uintptr_t base=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;
+    const uint32_t i=(uint32_t)(((uintptr_t)frame-base)/NOVA_PAGE_SIZE);
+    nova_pmm.owners[i]=owner;
+    *out=(struct nova_frame_ticket){
+        .frame=frame,.generation=nova_pmm.generations[i],.role=role,
+        .owner=owner
     };
     return true;
 }
 static inline bool nova_page_free_ticket(const struct nova_frame_ticket *ticket){
     return nova_pmm_ticket_valid(ticket) &&
-           nova_page_free_role(ticket->frame,ticket->role);
+           nova_page_free_owned(ticket->frame,ticket->role,ticket->owner);
 }
 static inline bool nova_pmm_physical_ticket(const struct nova_frame_ticket *ticket,
                                      uint64_t *physical){
-    return physical && nova_pmm_ticket_valid(ticket) &&
-           nova_pmm_physical_role(ticket->frame,ticket->role,physical);
+    if(!physical || !nova_pmm_ticket_valid(ticket))return false;
+    const uintptr_t base=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;
+    const uint32_t i=(uint32_t)(((uintptr_t)ticket->frame-base)/NOVA_PAGE_SIZE);
+    *physical=nova_pmm.phys_base+(uint64_t)i*NOVA_PAGE_SIZE;
+    return true;
 }
 static uint32_t nova_free_pages(void){
     return nova_pmm_metadata_valid()?nova_pmm.pages-nova_pmm.in_use:0;
