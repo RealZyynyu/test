@@ -1168,20 +1168,28 @@ static void shell_execute(void){
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
             size_t slot=nova_process_index(p);
-            /* Fail closed before revoking rights or freeing any frame. */
-            if(!nova_offline_drop_preflight(p,&nova_processes,
-                    &nova_user_spaces[slot],&nova_user_pt_ops,
-                    nova_process_page_phys,&nova_image_guard_ops,NULL))
+            struct nova_user_space *space=&nova_user_spaces[slot];
+            const bool has_space=!nova_user_space_is_empty(space);
+            /* Validate before the first teardown step; after a callback failure,
+             * resume only from the retained retry state. */
+            if(!space->teardown_started&&
+               !nova_offline_drop_preflight(p,&nova_processes,space,
+                    &nova_user_pt_ops,nova_process_page_phys,
+                    &nova_image_guard_ops,NULL))
                 shell_result("OFFLINE PROCESS OWNERSHIP INVALID");
             else{
                 (void)nova_save_unregister(&nova_private_saves,pid);
                 (void)nova_cap_unregister(&nova_app_policy,pid);
-                nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                const uint64_t owner=p->owner;
-                bool ok=nova_process_drop_guarded(&nova_processes,pid,
-                    nova_process_page_phys,&nova_image_guard_ops,NULL);
-                if(ok)ok=nova_owner_retire(owner);
-                shell_result(ok?"IMAGE+STACK+TABLES RELEASED":"RELEASE FAILED");
+                if(has_space&&!nova_user_space_destroy(space,&nova_user_pt_ops))
+                    shell_result("TEARDOWN INCOMPLETE; RETRY PDROP");
+                else{
+                    const uint64_t owner=p->owner;
+                    bool ok=nova_process_drop_guarded(&nova_processes,pid,
+                        nova_process_page_phys,&nova_image_guard_ops,NULL);
+                    if(ok)ok=nova_owner_retire(owner);
+                    shell_result(ok?"IMAGE+STACK+TABLES RELEASED":
+                                      "RELEASE INCOMPLETE; RETRY PDROP");
+                }
             }
         }
     }
