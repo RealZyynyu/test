@@ -39,6 +39,7 @@ static void setup(void){
     assert((uintptr_t)ram>=0x200000u);
     hhdm.offset=(uint64_t)((uintptr_t)ram-0x200000u);
     assert(nova_pmm_init(&map,&hhdm));
+    assert(nova_pmm_self_test());
     memset(elf,0,sizeof(elf));
     elf[0]=0x7f;elf[1]='E';elf[2]='L';elf[3]='F';
     elf[4]=2;elf[5]=1;elf[6]=1;
@@ -206,6 +207,8 @@ static void test_forged_ticket_never_wipes_frame(void){
     intact(ram[0],0xB2);
 }
 int main(void){
+    assert(strcmp(nova_elf_result_name(NOVA_ELF_OK),
+                  "VALID STATIC ELF64 (NOT EXECUTED)")==0);
     test_guarded_staging_and_drop();
     test_stale_same_role_reuse_fails_closed();
     test_corrupted_generation_and_physical_identity();
