@@ -30,9 +30,10 @@
 #define NOVA_CAP_NETWORK    (UINT32_C(1)<<3)
 #define NOVA_CAP_MICROPHONE (UINT32_C(1)<<4)
 #define NOVA_CAP_CONTROLLER (UINT32_C(1)<<5)
+#define NOVA_CAP_APP_SAVE   (UINT32_C(1)<<6)
 
-/* Only the three file operations currently have a mediation wrapper. */
-#define NOVA_CAP_IMPLEMENTED (NOVA_CAP_RAM_READ|NOVA_CAP_RAM_WRITE|NOVA_CAP_DISK_READ)
+/* File rights and private RAM-save access have mediation wrappers. */
+#define NOVA_CAP_IMPLEMENTED (NOVA_CAP_RAM_READ|NOVA_CAP_RAM_WRITE|NOVA_CAP_DISK_READ|NOVA_CAP_APP_SAVE)
 
 struct nova_cap_entry {
     uint32_t pid;
