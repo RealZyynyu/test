@@ -104,6 +104,22 @@ jobs:
             -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_owner_lifecycle.c -o /tmp/nova-owner-lifecycle-sanitized
           /tmp/nova-owner-lifecycle-sanitized
+  owned-images:
+    name: Owner-bound offline ELF frames and page-table preflight (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify owner separation and offline paging with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs tests/test_owned_images.c -o /tmp/nova-owned-images
+          /tmp/nova-owned-images
+      - name: Verify owned staging and rollback with Clang sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_owned_images.c -o /tmp/nova-owned-images-sanitized
+          /tmp/nova-owned-images-sanitized
   image-tickets:
     name: Staged ELF generation tickets and rollback (no ISO)
     runs-on: ubuntu-24.04

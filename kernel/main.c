@@ -653,37 +653,40 @@ static enum nova_elf_result nova_elf_check_path(const char *path,
  * No ring-3 program execution or hardware isolation is implemented. */
 /* Image frames retain allocation-time PMM generations in their staged
  * descriptors. Pointer-only frees are intentionally not used for images. */
-static bool nova_image_ticket_allocate(void *ctx,void **frame,
-                                       uint64_t *generation){
+static bool nova_image_ticket_allocate(void *ctx,uint64_t owner,
+                                       void **frame,uint64_t *generation){
     (void)ctx;
     if(!frame||!generation)return false;
     *frame=NULL;*generation=0;
     struct nova_frame_ticket ticket={0};
-    if(!nova_page_alloc_ticket(NOVA_FRAME_IMAGE,&ticket))return false;
+    if(!nova_page_alloc_owned_ticket(NOVA_FRAME_IMAGE,owner,&ticket))return false;
     *frame=ticket.frame;
     *generation=ticket.generation;
     return true;
 }
-static bool nova_image_ticket_physical(void *ctx,const void *frame,
-                                       uint64_t generation,uint64_t *out){
+static bool nova_image_ticket_physical(void *ctx,uint64_t owner,
+                                       const void *frame,uint64_t generation,
+                                       uint64_t *out){
     (void)ctx;
     struct nova_frame_ticket ticket={
-        .frame=(void *)frame,.generation=generation,.role=NOVA_FRAME_IMAGE
+        .frame=(void *)frame,.generation=generation,.role=NOVA_FRAME_IMAGE,
+        .owner=owner
     };
     return nova_pmm_physical_ticket(&ticket,out);
 }
-static bool nova_image_ticket_release(void *ctx,void *frame,
+static bool nova_image_ticket_release(void *ctx,uint64_t owner,void *frame,
                                       uint64_t generation){
     (void)ctx;
     struct nova_frame_ticket ticket={
-        .frame=frame,.generation=generation,.role=NOVA_FRAME_IMAGE
+        .frame=frame,.generation=generation,.role=NOVA_FRAME_IMAGE,
+        .owner=owner
     };
     return nova_page_free_ticket(&ticket);
 }
 static const struct nova_process_guard_ops nova_image_guard_ops={
-    .allocate=nova_image_ticket_allocate,
-    .physical=nova_image_ticket_physical,
-    .release=nova_image_ticket_release
+    .allocate_owned=nova_image_ticket_allocate,
+    .physical_owned=nova_image_ticket_physical,
+    .release_owned=nova_image_ticket_release
 };
 static bool nova_process_page_phys(void *ctx,const void *page,uint64_t *out){
     (void)ctx;return nova_pmm_physical_role(page,NOVA_FRAME_IMAGE,out);
@@ -763,6 +766,7 @@ static const struct nova_pt_ops nova_user_pt_ops={
     .allocate=nova_table_page_allocate,
     .release=nova_table_page_release,
     .physical_address=nova_process_page_phys,
+    .image_ticket_physical_address=nova_image_ticket_physical,
     .table_physical_address=nova_table_page_phys,
     .table_ticket_allocate=nova_table_ticket_allocate,
     .table_ticket_physical_address=nova_table_ticket_physical,
@@ -969,9 +973,13 @@ static void shell_execute(void){
         else{
             struct nova_elf_path source={.vfs=&nova_vfs_state,.path=path};
             uint32_t pid=0;
-            enum nova_process_result status=nova_process_stage_guarded(
+            uint64_t owner=0;
+            if(!nova_owner_create(&owner))
+                shell_result("PROCESS OWNER REGISTRY FULL");
+            else{
+            enum nova_process_result status=nova_process_stage_owned_guarded(
                 &nova_processes,path,nova_elf_from_vfs,&source,file_size,
-                nova_process_page_phys,&nova_image_guard_ops,NULL,&pid);
+                nova_process_page_phys,&nova_image_guard_ops,owner,NULL,&pid);
             if(status==NOVA_PROCESS_OK){
                 struct nova_process_image *img=nova_process_find(&nova_processes,pid);
                 size_t slot=nova_process_index(img);
@@ -989,12 +997,14 @@ static void shell_execute(void){
                             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                             (void)nova_process_drop_guarded(&nova_processes,pid,
                 nova_process_page_phys,&nova_image_guard_ops,NULL);
+                            (void)nova_owner_retire(owner);
                             shell_result("PRIVATE SAVE SLOT UNAVAILABLE");
                         }
                     }else{
                         nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                         (void)nova_process_drop_guarded(&nova_processes,pid,
                 nova_process_page_phys,&nova_image_guard_ops,NULL);
+                        (void)nova_owner_retire(owner);
                         shell_result("CAPABILITY REGISTRY FULL");
                     }
                 }else{
@@ -1002,9 +1012,14 @@ static void shell_execute(void){
                     nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                     (void)nova_process_drop_guarded(&nova_processes,pid,
                 nova_process_page_phys,&nova_image_guard_ops,NULL);
+                    (void)nova_owner_retire(owner);
                     shell_result(nova_pt_status_name(mapped));
                 }
-            }else shell_result(nova_process_result_name(status));
+            }else{
+                (void)nova_owner_retire(owner);
+                shell_result(nova_process_result_name(status));
+            }
+            }
         }
     }
     else if(shell_input[0]=='P'&&shell_input[1]=='I'&&
@@ -1093,8 +1108,10 @@ static void shell_execute(void){
             (void)nova_save_unregister(&nova_private_saves,pid);
             (void)nova_cap_unregister(&nova_app_policy,pid);
             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
+            const uint64_t owner=p->owner;
             bool ok=nova_process_drop_guarded(&nova_processes,pid,
                 nova_process_page_phys,&nova_image_guard_ops,NULL);
+            if(ok)ok=nova_owner_retire(owner);
             shell_result(ok?"IMAGE+STACK+TABLES RELEASED":"RELEASE FAILED");
         }
     }

@@ -40,6 +40,8 @@ typedef bool (*nova_pt_phys_fn)(void *,const void *,uint64_t *);
 typedef bool (*nova_pt_ticket_alloc_fn)(void *,void **,uint64_t *);
 typedef bool (*nova_pt_ticket_phys_fn)(void *,const void *,uint64_t,uint64_t *);
 typedef bool (*nova_pt_ticket_free_fn)(void *,void *,uint64_t);
+typedef bool (*nova_pt_owned_image_phys_fn)(void *,uint64_t,const void *,
+                                             uint64_t,uint64_t *);
 
 /* physical_address validates staged IMAGE frames during preflight.
  * Optional role-specific callbacks let the native PMM enforce independent
@@ -50,6 +52,8 @@ struct nova_pt_ops {
     nova_pt_alloc_fn allocate;
     nova_pt_free_fn release;
     nova_pt_phys_fn physical_address;
+    /* Validate owned ELF leaves with owner AND allocation-time generation. */
+    nova_pt_owned_image_phys_fn image_ticket_physical_address;
     nova_pt_phys_fn table_physical_address;
     nova_pt_ticket_alloc_fn table_ticket_allocate;
     nova_pt_ticket_phys_fn table_ticket_physical_address;
@@ -312,8 +316,14 @@ static inline enum nova_pt_result nova_pt_prepare(
     for(uint16_t i=0;i<image->page_count;i++){
         const struct nova_process_page *p=&image->pages[i];
         uint64_t phys=0;
-        if(!p->frame || !ops->physical_address(ops->context,p->frame,&phys) ||
-           (!nova_pt_valid_phys(phys) || phys!=p->physical_page))return NOVA_PT_BAD_FRAME;
+        if(!p->frame ||
+           (image->owner ?
+             (!p->generation || !ops->image_ticket_physical_address ||
+              !ops->image_ticket_physical_address(ops->context,image->owner,
+                  p->frame,p->generation,&phys)) :
+             !ops->physical_address(ops->context,p->frame,&phys)) ||
+           !nova_pt_valid_phys(phys) || phys!=p->physical_page)
+            return NOVA_PT_BAD_FRAME;
         for(uint16_t j=0;j<tree->protected_count;j++){
             if(tree->protected_frames[j]==p->frame ||
                tree->protected_physical[j]==phys){
