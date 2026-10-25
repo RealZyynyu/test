@@ -8,6 +8,7 @@
 #include <string.h>
 #include "../kernel/paging.h"
 #include "../kernel/user_space.h"
+#include "../kernel/user_buffer.h"
 #define POOL 192u
 #define BINARY_BYTES 16384u
 
@@ -204,6 +205,21 @@ static void test_guarded_user_stack(void){
     assert(space.guard_base==NOVA_USER_STACK_GUARD);
     assert(space.page_tables.mapped_pages==img->page_count+NOVA_USER_STACK_PAGES);
     assert(nova_user_stack_guard_is_unmapped(&space));
+    /* Offline copyin/copyout pointer span checking; no user pointer derefs. */
+    assert(nova_user_span_accessible(&space,0x401000,16,false));
+    assert(!nova_user_span_accessible(&space,0x401000,16,true)); /* RX */
+    assert(nova_user_span_accessible(&space,0x402000,4096,true)); /* RW data */
+    assert(nova_user_span_accessible(&space,0x402fff,2,true)); /* crosses into RW */
+    assert(nova_user_span_accessible(&space,NOVA_USER_STACK_TOP-64u,64u,true));
+    assert(!nova_user_span_accessible(&space,NOVA_USER_STACK_GUARD,16,false));
+    assert(!nova_user_span_accessible(&space,NOVA_USER_STACK_GUARD,16,true));
+    assert(!nova_user_span_accessible(&space,NOVA_USER_STACK_GUARD+4095u,2u,true));
+    assert(!nova_user_span_accessible(&space,NOVA_USER_STACK_TOP-1u,2u,true));
+    assert(!nova_user_span_accessible(&space,0x400000,10,false));
+    assert(!nova_user_span_accessible(&space,UINT64_MAX-2u,20,false));
+    assert(!nova_user_span_accessible(&space,0x401000,0,false));
+    assert(!nova_user_span_accessible(&space,0x401000,4097u,false));
+    assert(!nova_user_span_accessible(NULL,0x401000,4,false));
     uint64_t phys=0,flags=0;
     assert(!nova_pt_lookup(&space.page_tables,NOVA_USER_STACK_GUARD,&phys,&flags));
     assert(!nova_pt_lookup(&space.page_tables,NOVA_USER_STACK_TOP,&phys,&flags));
