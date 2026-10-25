@@ -9,7 +9,7 @@
 #define IMAGE_SIZE 16384u
 #define TEST_POOL 16u
 static uint8_t image[IMAGE_SIZE];
-static uint8_t frames[TEST_POOL][4096];
+static _Alignas(4096) uint8_t frames[TEST_POOL][4096];
 static bool used[TEST_POOL];
 static uint32_t active_pages=0;
 static uint32_t allocations_before_failure=UINT32_MAX;
@@ -142,9 +142,114 @@ static void test_failures(void){
     assert(stage(&tab,&pid)==NOVA_PROCESS_OK&&pid==5); /* monotonic IDs */
     assert(nova_process_drop(&tab,pid,free_page,NULL));
 }
+/* A malicious allocator can return a borrowed page. It must be rejected
+ * before zeroing any bytes and must never be released as a new allocation. */
+struct borrowed_ctx {
+    unsigned calls;
+    unsigned borrow_on;
+    uint8_t *borrowed;
+    bool check_original_on_free;
+};
+static void *borrow_alloc(void *ctx){
+    struct borrowed_ctx *b=(struct borrowed_ctx *)ctx;
+    if(++b->calls==b->borrow_on)return b->borrowed;
+    return alloc_page(NULL);
+}
+static void borrow_free(void *ctx,void *frame){
+    struct borrowed_ctx *b=(struct borrowed_ctx *)ctx;
+    if(b->check_original_on_free && frame==frames[0]){
+        /* First segment must have survived the rejected second allocation. */
+        assert(frames[0][0]==1 && frames[0][127]==128);
+    }
+    free_page(NULL,frame);
+}
+static enum nova_process_result stage_borrowed(
+    struct nova_process_table *table,struct borrowed_ctx *ctx,uint32_t *pid){
+    return nova_process_stage(table,"DISK:/APP.ELF",read_image,NULL,IMAGE_SIZE,
+                              borrow_alloc,borrow_free,ctx,pid);
+}
+static void test_borrowed_frame_rejected_before_write(void){
+    fixture();
+    struct nova_process_table table={0};
+    uint32_t pid=99;
+    struct borrowed_ctx same={.borrow_on=2,.borrowed=frames[0],
+                              .check_original_on_free=true};
+    assert(stage_borrowed(&table,&same,&pid)==NOVA_PROCESS_BAD_FRAME);
+    assert(pid==0 && active_pages==0 && nova_process_count(&table)==0);
+    /* The alias is an interior pointer into the previously allocated page. */
+    struct borrowed_ctx interior={.borrow_on=2,.borrowed=frames[0]+128,
+                                  .check_original_on_free=true};
+    assert(stage_borrowed(&table,&interior,&pid)==NOVA_PROCESS_BAD_FRAME);
+    assert(pid==0 && active_pages==0 && nova_process_count(&table)==0);
+    /* A non-aligned fresh pointer must not be zeroed or released. */
+    memset(frames[0],0xA5,4096);
+    struct borrowed_ctx misaligned={.borrow_on=1,.borrowed=frames[0]+1};
+    assert(stage_borrowed(&table,&misaligned,&pid)==NOVA_PROCESS_BAD_FRAME);
+    for(unsigned i=0;i<4096;i++)assert(frames[0][i]==0xA5);
+    assert(active_pages==0);
+    /* A frame already owned by another staged process must stay intact. */
+    fixture();
+    uint32_t original=0;
+    assert(stage(&table,&original)==NOVA_PROCESS_OK);
+    assert(active_pages==3);
+    uint8_t snapshot[4096];
+    memcpy(snapshot,frames[0],sizeof(snapshot));
+    struct borrowed_ctx foreign={.borrow_on=1,.borrowed=frames[0]};
+    assert(stage_borrowed(&table,&foreign,&pid)==NOVA_PROCESS_BAD_FRAME);
+    assert(pid==0 && active_pages==3 && nova_process_count(&table)==1);
+    assert(memcmp(snapshot,frames[0],sizeof(snapshot))==0);
+    assert(nova_process_drop(&table,original,free_page,NULL));
+    assert(active_pages==0);
+}
+static void test_corrupted_image_teardown_fails_closed(void){
+    fixture();
+    struct nova_process_table table={0};
+    uint32_t pid=0;
+    assert(stage(&table,&pid)==NOVA_PROCESS_OK);
+    struct nova_process_image *proc=nova_process_find(&table,pid);
+    assert(proc && active_pages==3);
+    uint8_t *original[3]={proc->pages[0].frame,proc->pages[1].frame,
+                          proc->pages[2].frame};
+    proc->page_count=NOVA_PROCESS_MAX_PAGES+1u;
+    uint8_t scratch=0;
+    assert(!nova_process_peek(proc,0x401000,&scratch,1));
+    assert(!nova_process_drop(&table,pid,free_page,NULL));
+    assert(active_pages==3 && nova_process_count(&table)==0);
+    for(unsigned i=0;i<3;i++)free_page(NULL,original[i]);
+    assert(active_pages==0);
+
+    assert(stage(&table,&pid)==NOVA_PROCESS_OK);
+    proc=nova_process_find(&table,pid);
+    assert(proc);
+    for(unsigned i=0;i<3;i++)original[i]=proc->pages[i].frame;
+    proc->pages[1].frame=proc->pages[0].frame;
+    assert(!nova_process_drop(&table,pid,free_page,NULL));
+    assert(active_pages==3);
+    for(unsigned i=0;i<3;i++)free_page(NULL,original[i]);
+    assert(active_pages==0);
+
+    /* A forged cross-process alias must not free the other image's frame. */
+    uint32_t first=0,second=0;
+    assert(stage(&table,&first)==NOVA_PROCESS_OK);
+    assert(stage(&table,&second)==NOVA_PROCESS_OK);
+    assert(active_pages==6);
+    struct nova_process_image *other=nova_process_find(&table,second);
+    struct nova_process_image *owner=nova_process_find(&table,first);
+    assert(other && owner);
+    for(unsigned i=0;i<3;i++)original[i]=other->pages[i].frame;
+    other->pages[0].frame=owner->pages[0].frame;
+    assert(!nova_process_drop(&table,second,free_page,NULL));
+    assert(active_pages==6 && nova_process_find(&table,first)!=NULL);
+    for(unsigned i=0;i<3;i++)free_page(NULL,original[i]);
+    assert(nova_process_drop(&table,first,free_page,NULL));
+    assert(active_pages==0);
+}
+
 int main(void){
     test_staging();
     test_failures();
+    test_borrowed_frame_rejected_before_write();
+    test_corrupted_image_teardown_fails_closed();
     assert(active_pages==0);
     puts("Staged process images: validated ELF, zeroed BSS, separate frames, rollback, limits and release OK.");
     return 0;
