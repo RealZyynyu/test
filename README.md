@@ -87,6 +87,8 @@ disk filesystem.
 - `kernel/paging.h` — offline PML4 user-page mapping constructor (never CR3)
 - `kernel/user_space.h` — planned RW/NX user stack, guard page and cleanup
 - `kernel/capabilities.h` — staged-app default-deny file-access policy
+- `kernel/broker.h` — fixed-size simulated syscall requests (no hardware trap)
+- `kernel/user_buffer.h` — offline virtual-memory span checks
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -274,6 +276,42 @@ protected files and obsolete PIDs.
 Kernel-mode code can still bypass the policy, and there is no Ring-3
 process execution, syscall broker, per-app private storage, or
 real permission prompt. See the [app permission architecture and tests](docs/app-permissions.md) for precise implementation status and next steps.
+
+## Simulated application-to-kernel API (source-only)
+
+The source includes `kernel/broker.h`: a fixed-size **draft ABI v1**
+for later application system calls. In the current kernel it is exclusively
+a synchronous Ring-0 simulation, **not a real syscall and not a sandbox**.
+
+- `VERSION` reports the draft version for a registered staged app.
+- `READ`, `WRITE_RAM`, and `STAT` require existing scoped file rights.
+- No disk writes, network, microphone, controller, or privileged operations.
+- Requests embed at most 32 path bytes and 64 data bytes; there are no
+  user-provided pointers or unbounded memory copies.
+- Every denied or invalid request returns a cleared response.
+- `kernel/user_buffer.h` checks candidate offline page-table access
+  limits, writable pages, and unallocated guard pages without dereferencing
+  any user pointer or modifying CR3.
+
+Development commands (not distributed in the older ISO):
+
+```text
+PSTAGE DISK:/APP.ELF   # offline preparation, NOT execution
+PBROKER 1              # simulated ABI version, NOT a real syscall
+PBUF 1                 # validate planned stack and guard-page mapping
+PACCESS 1              # rights bitmask (default 0)
+PDROP 1                # discard image and revoke rights
+```
+
+Host tests are compiled with GCC and Clang sanitizers; they exercise
+invalid requests, bounds, denied permissions, interrupted writes,
+read-only disk constraints and offline virtual-memory span checks. A
+true syscall entry still requires reliable kernel exceptions, TSS,
+Ring-3 execution, protected context switching, robust copyin/copyout
+and kernel-enforced process identities.
+
+See [the simulated syscall broker specification](docs/syscall-broker-draft.md).
+The final ISO remains manually gated and **has not been created**.
 
 ## Important missing features / final-release blockers
 
