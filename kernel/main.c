@@ -14,6 +14,7 @@
 #include "interrupts.h"
 #include "rtc.h"
 #include "cpu.h"
+#include "ata.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -601,7 +602,7 @@ static void nova_show_metric(const char *prefix,uint64_t value,const char *suffi
 }
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("LS CAT TOUCH RM WRITE DATE CPU MEM PMM PCI TASKS TICKS");
+        shell_result("LS CAT TOUCH RM WRITE DATE CPU DISK MEM PMM PCI");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -611,7 +612,7 @@ static void shell_execute(void){
         }
         shell_result(list);
     }
-    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.8 X86_64");
+    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.9 X86_64");
     else if(nova_file_equal(shell_input,"TICKS"))
         nova_show_metric("TIMER IRQ HANDLER CALLS ",nova_timer_ticks,NULL,0);
     else if(nova_file_equal(shell_input,"MEM"))
@@ -634,6 +635,16 @@ static void shell_execute(void){
     }
     else if(nova_file_equal(shell_input,"STAT"))
         nova_show_metric("RAM FILES ",nova_file_count()," / SLOTS ",NOVA_FILE_COUNT);
+    else if(nova_file_equal(shell_input,"DISK")){
+        if(nova_ata.present)nova_show_metric("IDE READ-ONLY SECTORS: ",nova_ata.sectors,NULL,0);
+        else shell_result("NO LEGACY IDE DISK DETECTED");
+    }
+    else if(nova_file_equal(shell_input,"SECTOR0")){
+        uint8_t bytes[512];
+        if(!nova_ata_read_sector(0,bytes))shell_result("READ-ONLY DISK SECTOR UNAVAILABLE");
+        else shell_result((bytes[510]==0x55 && bytes[511]==0xAA)?
+                          "SECTOR0 HAS MBR SIGNATURE":"SECTOR0 READ OK (NO MBR SIGNATURE)");
+    }
     else if(nova_file_equal(shell_input,"CLEAR")){
         for(int i=0;i<3;i++)shell_output[i][0]=0;
     }else if(shell_input[0]=='C'&&shell_input[1]=='A'&&
@@ -840,6 +851,10 @@ void kmain(void){
     else serial_log("NOVA_RTC_UNAVAILABLE\n");
     nova_pci_scan();
     serial_log("NOVA_PCI_INVENTORY_READY\n");
+    if(nova_ata_probe()){
+        serial_log("NOVA_ATA_PRIMARY_DETECTED\n");
+        serial_log(nova_ata_readonly_selftest()?"NOVA_ATA_READ0_OK\n":"NOVA_ATA_READ0_FAILED\n");
+    }else serial_log("NOVA_ATA_NO_DISK\n");
     bool jobs_ready=nova_job_add("HEARTBEAT",nova_job_heartbeat);
     jobs_ready=jobs_ready && nova_job_add("MEMORY",nova_job_memory_poll);
     jobs_ready=jobs_ready && nova_job_add("RAMFS",nova_job_file_health);
