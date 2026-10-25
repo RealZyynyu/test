@@ -875,7 +875,7 @@ static bool nova_retry_pending_stage_rollbacks(void){
  * owner while stack/table frames remain, and retain a retryable tombstone if
  * retirement fails after the last image frame was released. */
 static bool nova_drop_staged_process(uint32_t pid){
-    struct nova_process_image *image=nova_process_find(&nova_processes,pid);
+    struct nova_process_image *image=nova_process_find_any(&nova_processes,pid);
     if(!image)return false;
     struct nova_user_space *space=&nova_user_spaces[nova_process_index(image)];
     if(image->owner_retirement_pending){
@@ -1204,7 +1204,7 @@ static void shell_execute(void){
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
             bool ok=nova_drop_staged_process(pid);
-            struct nova_process_image *remaining=nova_process_find(&nova_processes,pid);
+            struct nova_process_image *remaining=nova_process_find_any(&nova_processes,pid);
             if(ok)
                 shell_result("IMAGE+STACK+TABLES+OWNER RELEASED");
             else if(remaining&&remaining->owner_retirement_pending)
