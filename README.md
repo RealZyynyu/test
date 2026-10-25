@@ -94,7 +94,8 @@ disk filesystem.
 - `kernel/app_storage.h` — volatile per-program RAM save slots (64 B)
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
-- `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
+- `kernel/interrupts.h`, `kernel/irq.S` — experimental IRQs and fatal CPU exception stubs
+- `kernel/fault.h` — bounded fault context and serial-report formatting
 - `kernel/ps2_mouse.h`, `kernel/rtc.h`, `kernel/cpu.h`, `kernel/pci.h`
 - `kernel/game_input.h` — keyboard game actions, hold/release states and controller adapter
 - `tests/test_fat16.c` — synthetic MBR/superfloppy, FAT file, boundary and
@@ -357,6 +358,33 @@ computers. The allocator still manages only a tiny pool on a single core
 and provides no real CPU-enforced app isolation. A complete kernel needs
 additional allocator tests, memory protection, fault handling, and
 multiprocessor synchronization before release.
+
+## Fatal x86-64 exception diagnostics (source-only)
+
+The CPU exception entry path now uses **distinct interrupt stubs for vectors
+0–31** instead of reporting every exception as one generic fatal event.
+The assembly preserves all general-purpose registers, keeps CPU-provided
+error codes for fault vectors that include them, and adds a synthetic
+zero only for vectors that do not. A bounded serial diagnostic prints:
+
+- Exception number and readable fault category
+- CPU error code and faulting instruction pointer (RIP)
+- Code segment (CS) and flags (RFLAGS)
+- CR2 (faulting virtual address) **only for page faults**
+
+An exception still ends in an intentional halt. The handler does not
+return into an unknown or corrupted kernel context, try to continue running,
+write anything to disk, or execute an app. Host tests cover the 32 vector
+classifications and bounded diagnostic formatting, and a static audit checks
+IDT wiring against the architecture's exception error-code list. CI also
+assembles the IRQ stubs and links the native kernel, **without creating an ISO**.
+
+**Critical limitation:** This is diagnostic groundwork, not a full protected
+exception system. A separate interrupt stack (TSS/IST) for double faults,
+per-CPU setup, actual page-fault recovery and ring-3 process exceptions
+have not yet been implemented. The new CPU fault entry behavior has not
+been validated in a booted QEMU/VirtualBox VM; test coverage is limited
+to compilation, structure inspection and host-side checks.
 
 ## Important missing features / final-release blockers
 
