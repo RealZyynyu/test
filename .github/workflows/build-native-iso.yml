@@ -44,6 +44,7 @@ jobs:
           cp kernel/fat16.h _builder/kernel/src/fat16.h
           cp kernel/vfs.h _builder/kernel/src/vfs.h
           cp kernel/elf64.h _builder/kernel/src/elf64.h
+          cp kernel/process_image.h _builder/kernel/src/process_image.h
           cp limine.conf _builder/limine.conf
       - name: Build independent x86-64 kernel and ISO
         run: |
