@@ -435,8 +435,9 @@ static inline bool nova_process_retry_stage_rollback(
     struct nova_process_image *image=&table->slots[slot];
     if(!image->rollback_pending||image->staged||
        image->owner_retirement_pending||image->pid||image->entry||
-       image->segments||image->label[0]||
-       image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
+       image->segments||image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
+    for(size_t i=0;i<NOVA_PROCESS_LABEL_CAP;i++)
+        if(image->label[i])return false;
     for(uint32_t i=image->page_count;i<NOVA_PROCESS_MAX_PAGES;i++){
         const struct nova_process_page *p=&image->pages[i];
         if(p->virtual_page||p->frame||p->physical_page||p->generation||p->flags)
