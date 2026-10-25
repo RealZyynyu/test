@@ -102,7 +102,7 @@ static void test_page_tables(void){
     assert(active==7);
     uint64_t phys=0,attr=0;
     assert(nova_pt_lookup(&tree,0x401000,&phys,&attr));
-    assert(phys==tree.table_physical[0]?false:true); /* leaf != root */
+    assert(phys!=tree.table_physical[0]); /* leaf != root */
     assert(phys!=(tree.root_physical));
     assert((attr&(NOVA_PT_P|NOVA_PT_US))==(NOVA_PT_P|NOVA_PT_US));
     assert(!(attr&NOVA_PT_RW) && !(attr&NOVA_PT_NX)); /* RX code */
@@ -121,6 +121,7 @@ static void test_page_tables(void){
     assert(nova_pt_map_one(&tree,&ops,0x405000,phys,7)==NOVA_PT_INVALID);
     assert(nova_pt_map_one(&tree,&ops,0x405000,3,5)==NOVA_PT_INVALID);
     assert(!strcmp(nova_pt_status_name(NOVA_PT_OK),"PAGE TABLES PREPARED (OFFLINE ONLY)"));
+    assert(nova_elf_result_name(NOVA_ELF_OK)[0]!=0);
     assert(nova_pt_prepare(&tree,&ops,img)==NOVA_PT_INVALID);
     nova_pt_destroy(&tree,&ops);
     assert(active==3 && !tree.prepared && tree.tables_used==0);
