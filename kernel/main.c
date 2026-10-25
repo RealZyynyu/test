@@ -1072,10 +1072,10 @@ static void shell_execute(void){
             shell_input[4]=='G'&&shell_input[5]=='E'&&shell_input[6]==' '){
         const char *path=shell_input+7;
         uint32_t file_size=0;bool read_only=false;
-        if(!nova_vfs_size(&nova_vfs_state,path,&file_size,&read_only))
-            shell_result("PROGRAM FILE NOT FOUND");
-        else if(!nova_retry_pending_stage_rollbacks())
+        if(!nova_retry_pending_stage_rollbacks())
             shell_result("PSTAGE ROLLBACK PENDING; RETRY PSTAGE");
+        else if(!nova_vfs_size(&nova_vfs_state,path,&file_size,&read_only))
+            shell_result("PROGRAM FILE NOT FOUND");
         else{
             struct nova_elf_path source={.vfs=&nova_vfs_state,.path=path};
             uint32_t pid=0;
