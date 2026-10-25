@@ -1,0 +1,38 @@
+name: NOVA Source Tests (no ISO)
+on:
+  push:
+    branches: [nova-os-native]
+    paths:
+      - 'kernel/**'
+      - 'tests/**'
+      - '.github/workflows/source-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fat16:
+    name: Read-only FAT16 host tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with GCC warnings enabled
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_fat16.c -o /tmp/nova-test-fat16
+      - name: Execute synthetic-disk tests
+        run: /tmp/nova-test-fat16
+      - name: Clang + undefined-behavior sanitizer
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=undefined -fno-sanitize-recover=all \
+            tests/test_fat16.c -o /tmp/nova-test-fat16-ubsan
+          /tmp/nova-test-fat16-ubsan
+      - name: Verify final ISO still needs manual approval
+        run: |
+          grep -q 'workflow_dispatch:' .github/workflows/build-native-iso.yml
+          grep -q 'final_release:' .github/workflows/build-native-iso.yml
+          if grep -Eq '^  push:' .github/workflows/build-native-iso.yml; then
+            echo "ERROR: final ISO workflow must not build on pushes" >&2
+            exit 1
+          fi
+          echo "Final ISO is manual-only."
