@@ -135,16 +135,29 @@ rollback:
     nova_user_space_destroy(space,ops);
     return result;
 }
+/* Offline stack-layout integrity check: reject forged guard PTEs and
+ * verify ALL four stack leaves against the allocator's recorded frames.
+ * A mere failed lookup cannot prove that a guard slot is physically empty.
+ */
 static inline bool nova_user_stack_guard_is_unmapped(
                             const struct nova_user_space *space){
-    if(!space||!space->prepared)return false;
-    uint64_t phys=0,flags=0;
-    if(nova_pt_lookup(&space->page_tables,space->guard_base,&phys,&flags))
+    if(!space||!space->prepared||
+       space->stack_count!=NOVA_USER_STACK_PAGES||
+       space->guard_base!=NOVA_USER_STACK_GUARD||
+       space->stack_top!=NOVA_USER_STACK_TOP||
+       !nova_pt_slot_empty(&space->page_tables,space->guard_base))
         return false;
-    if(!nova_pt_lookup(&space->page_tables,
-                space->stack_top-NOVA_PT_PAGE_SIZE,&phys,&flags))
-        return false;
-    return (flags&(NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US|NOVA_PT_NX))==
-           (NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US|NOVA_PT_NX);
+    const uint64_t expected=NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US|NOVA_PT_NX;
+    for(uint32_t i=0;i<NOVA_USER_STACK_PAGES;i++){
+        uint64_t va=NOVA_USER_STACK_TOP-
+                    (uint64_t)(NOVA_USER_STACK_PAGES-i)*NOVA_PT_PAGE_SIZE;
+        uint64_t phys=0,flags=0;
+        if(!space->stack_frames[i] ||
+           !nova_pt_valid_phys(space->stack_physical[i]) ||
+           !nova_pt_lookup(&space->page_tables,va,&phys,&flags) ||
+           phys!=space->stack_physical[i] || flags!=expected)
+            return false;
+    }
+    return true;
 }
 #endif
