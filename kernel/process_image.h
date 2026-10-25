@@ -221,26 +221,31 @@ static inline bool nova_process_release_image_impl(
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx,
     const struct nova_process_guard_ops *guard){
     if(!image)return false;
-    bool safe=(image->guarded ?
+    const bool safe=(image->guarded ?
         (guard && (image->owner ? guard->release_owned!=NULL :
                                   guard->release!=NULL)) :
         (image->owner==0 && free_page!=NULL)) &&
         nova_process_frames_releasable_guarded(image,table,physical,ctx,guard);
-    if(safe){
-        for(uint32_t i=0;i<image->page_count;i++){
-            const struct nova_process_page *p=&image->pages[i];
-            if(image->guarded){
-                if(image->owner){
-                    if(!guard->release_owned(ctx,image->owner,p->frame,
-                                             p->generation))safe=false;
-                }else if(!guard->release(ctx,p->frame,p->generation))safe=false;
-            }else free_page(ctx,p->frame);
-        }
+    if(!safe)return false;
+    /* Tail-first cleanup retains the exact remaining suffix after a callback
+     * failure, so a later PDROP can retry without losing ownership metadata. */
+    while(image->page_count){
+        uint16_t i=(uint16_t)(image->page_count-1u);
+        struct nova_process_page *p=&image->pages[i];
+        bool released=true;
+        if(image->guarded){
+            if(image->owner)
+                released=guard->release_owned(ctx,image->owner,p->frame,
+                                               p->generation);
+            else
+                released=guard->release(ctx,p->frame,p->generation);
+        }else free_page(ctx,p->frame);
+        if(!released)return false;
+        *p=(struct nova_process_page){0};
+        image->page_count=i;
     }
-    /* On failure, the descriptor is dropped but suspect frames are NOT
-     * reclaimed. Do not interpret false as successful memory recovery. */
     *image=(struct nova_process_image){0};
-    return safe;
+    return true;
 }
 static inline bool nova_process_release_image(
     struct nova_process_image *image,const struct nova_process_table *table,
