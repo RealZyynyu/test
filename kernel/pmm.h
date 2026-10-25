@@ -77,6 +77,21 @@ static bool nova_page_free(void *ptr){
     nova_pmm.in_use--;
     return true;
 }
+/* Convert a PMM-owned HHDM page to its verified physical address.
+ * Does not accept arbitrary kernel pointers or unallocated frames. */
+static bool nova_pmm_physical(const void *ptr,uint64_t *physical){
+    if(!nova_pmm.initialized||!ptr||!physical)return false;
+    uintptr_t base=(uintptr_t)nova_pmm.phys_base+nova_pmm.hhdm_offset;
+    uintptr_t p=(uintptr_t)ptr;
+    if(p<base)return false;
+    uintptr_t delta=p-base;
+    if((delta&(NOVA_PAGE_SIZE-1u))!=0||
+       delta/NOVA_PAGE_SIZE>=nova_pmm.pages)return false;
+    uint32_t index=(uint32_t)(delta/NOVA_PAGE_SIZE);
+    if(!(nova_pmm.bitmap[index>>3]&(uint8_t)(1u<<(index&7u))))return false;
+    *physical=nova_pmm.phys_base+(uint64_t)index*NOVA_PAGE_SIZE;
+    return true;
+}
 static uint32_t nova_free_pages(void){
     return nova_pmm.initialized?nova_pmm.pages-nova_pmm.in_use:0;
 }
