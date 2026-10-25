@@ -63,10 +63,35 @@ static void free_page(void *ctx,void *ptr){
     }
     assert(!"invalid frame pointer");
 }
+/* Simulated physical identities: separate from host pointers and valid
+ * only while the synthetic frame allocator marks a frame allocated. */
+static bool physical_page(void *ctx,const void *frame,uint64_t *out){
+    (void)ctx;
+    if(!out)return false;
+    for(unsigned i=0;i<TEST_POOL;i++)if(frame==frames[i] && used[i]){
+        *out=UINT64_C(0x200000)+(uint64_t)i*4096u;
+        return true;
+    }
+    return false;
+}
+struct physical_fault {
+    const void *target;
+    uint64_t reported;
+    bool deny;
+};
+static bool faulty_physical(void *ctx,const void *frame,uint64_t *out){
+    struct physical_fault *fault=(struct physical_fault *)ctx;
+    if(!physical_page(NULL,frame,out))return false;
+    if(frame==fault->target){
+        if(fault->deny)return false;
+        *out=fault->reported;
+    }
+    return true;
+}
 static enum nova_process_result stage(struct nova_process_table *table,
                                       uint32_t *pid){
     return nova_process_stage(table,"DISK:/APP.ELF",read_image,NULL,IMAGE_SIZE,
-                              alloc_page,free_page,NULL,pid);
+                              alloc_page,free_page,physical_page,NULL,pid);
 }
 static void test_staging(void){
     fixture();
@@ -95,9 +120,9 @@ static void test_staging(void){
     assert(!nova_process_peek(proc,UINT64_MAX,out,2));
     assert(!nova_process_peek(proc,0x401000,NULL,1));
     assert(nova_process_peek(proc,0x401000,NULL,0));
-    assert(nova_process_drop(&tab,pid,free_page,NULL));
+    assert(nova_process_drop(&tab,pid,free_page,physical_page,NULL));
     assert(active_pages==0 && nova_process_count(&tab)==0);
-    assert(!nova_process_drop(&tab,pid,free_page,NULL));
+    assert(!nova_process_drop(&tab,pid,free_page,physical_page,NULL));
     assert(!nova_process_find(&tab,pid));
     assert(!strcmp(nova_process_result_name(NOVA_PROCESS_OK),
                    "IMAGE STAGED - NOT EXECUTABLE YET"));
@@ -107,10 +132,10 @@ static void test_staging(void){
 static void test_failures(void){
     fixture();struct nova_process_table tab={0};uint32_t pid=88;
     assert(nova_process_stage(NULL,"APP",read_image,NULL,IMAGE_SIZE,
-              alloc_page,free_page,NULL,&pid)==NOVA_PROCESS_BAD_INPUT);
+              alloc_page,free_page,physical_page,NULL,&pid)==NOVA_PROCESS_BAD_INPUT);
     assert(pid==0);
     assert(nova_process_stage(&tab,"APP",read_image,NULL,IMAGE_SIZE,
-              alloc_page,free_page,NULL,NULL)==NOVA_PROCESS_BAD_INPUT);
+              alloc_page,free_page,physical_page,NULL,NULL)==NOVA_PROCESS_BAD_INPUT);
     w32(64+4,7); /* unsafe executable+writable */
     assert(stage(&tab,&pid)==NOVA_PROCESS_INVALID_ELF);
     assert(active_pages==0 && nova_process_count(&tab)==0);
@@ -137,10 +162,10 @@ static void test_failures(void){
     assert(active_pages==NOVA_PROCESS_SLOTS*3u);
     assert(stage(&tab,&pid)==NOVA_PROCESS_NO_SLOT);
     for(unsigned i=0;i<NOVA_PROCESS_SLOTS;i++)
-        assert(nova_process_drop(&tab,ids[i],free_page,NULL));
+        assert(nova_process_drop(&tab,ids[i],free_page,physical_page,NULL));
     assert(active_pages==0&&nova_process_count(&tab)==0);
     assert(stage(&tab,&pid)==NOVA_PROCESS_OK&&pid==5); /* monotonic IDs */
-    assert(nova_process_drop(&tab,pid,free_page,NULL));
+    assert(nova_process_drop(&tab,pid,free_page,physical_page,NULL));
 }
 /* A malicious allocator can return a borrowed page. It must be rejected
  * before zeroing any bytes and must never be released as a new allocation. */
@@ -166,7 +191,7 @@ static void borrow_free(void *ctx,void *frame){
 static enum nova_process_result stage_borrowed(
     struct nova_process_table *table,struct borrowed_ctx *ctx,uint32_t *pid){
     return nova_process_stage(table,"DISK:/APP.ELF",read_image,NULL,IMAGE_SIZE,
-                              borrow_alloc,borrow_free,ctx,pid);
+                              borrow_alloc,borrow_free,physical_page,ctx,pid);
 }
 static void test_borrowed_frame_rejected_before_write(void){
     fixture();
@@ -198,7 +223,7 @@ static void test_borrowed_frame_rejected_before_write(void){
     assert(stage_borrowed(&table,&foreign,&pid)==NOVA_PROCESS_BAD_FRAME);
     assert(pid==0 && active_pages==3 && nova_process_count(&table)==1);
     assert(memcmp(snapshot,frames[0],sizeof(snapshot))==0);
-    assert(nova_process_drop(&table,original,free_page,NULL));
+    assert(nova_process_drop(&table,original,free_page,physical_page,NULL));
     assert(active_pages==0);
 }
 static void test_corrupted_image_teardown_fails_closed(void){
@@ -213,7 +238,7 @@ static void test_corrupted_image_teardown_fails_closed(void){
     proc->page_count=NOVA_PROCESS_MAX_PAGES+1u;
     uint8_t scratch=0;
     assert(!nova_process_peek(proc,0x401000,&scratch,1));
-    assert(!nova_process_drop(&table,pid,free_page,NULL));
+    assert(!nova_process_drop(&table,pid,free_page,physical_page,NULL));
     assert(active_pages==3 && nova_process_count(&table)==0);
     for(unsigned i=0;i<3;i++)free_page(NULL,original[i]);
     assert(active_pages==0);
@@ -223,7 +248,7 @@ static void test_corrupted_image_teardown_fails_closed(void){
     assert(proc);
     for(unsigned i=0;i<3;i++)original[i]=proc->pages[i].frame;
     proc->pages[1].frame=proc->pages[0].frame;
-    assert(!nova_process_drop(&table,pid,free_page,NULL));
+    assert(!nova_process_drop(&table,pid,free_page,physical_page,NULL));
     assert(active_pages==3);
     for(unsigned i=0;i<3;i++)free_page(NULL,original[i]);
     assert(active_pages==0);
@@ -238,18 +263,125 @@ static void test_corrupted_image_teardown_fails_closed(void){
     assert(other && owner);
     for(unsigned i=0;i<3;i++)original[i]=other->pages[i].frame;
     other->pages[0].frame=owner->pages[0].frame;
-    assert(!nova_process_drop(&table,second,free_page,NULL));
+    assert(!nova_process_drop(&table,second,free_page,physical_page,NULL));
     assert(active_pages==6 && nova_process_find(&table,first)!=NULL);
     for(unsigned i=0;i<3;i++)free_page(NULL,original[i]);
-    assert(nova_process_drop(&table,first,free_page,NULL));
+    assert(nova_process_drop(&table,first,free_page,physical_page,NULL));
     assert(active_pages==0);
 }
 
+/* Physical alias rejection: distinct virtual pointers can still designate
+ * the SAME machine frame. Reject before touching the suspect page, and do
+ * not release a frame whose ownership cannot be established. */
+static void test_physical_alias_rejected_before_copy(void){
+    fixture();
+    struct nova_process_table table={0};
+    uint32_t pid=55;
+    struct physical_fault same={.target=frames[1],.reported=UINT64_C(0x200000)};
+    assert(nova_process_stage(&table,"ALIAS",read_image,NULL,IMAGE_SIZE,
+           alloc_page,free_page,faulty_physical,&same,&pid)==NOVA_PROCESS_BAD_FRAME);
+    assert(pid==0 && nova_process_count(&table)==0);
+    assert(active_pages==1 && used[1] && !used[0]);
+    for(unsigned i=0;i<4096;i++)assert(frames[1][i]==0xD9);
+    free_page(NULL,frames[1]);
+    assert(active_pages==0);
+
+    /* A fresh host pointer reported as another staged image's physical
+     * frame must not modify that image's bytes or free its memory. */
+    fixture();
+    uint32_t owner=0;
+    assert(stage(&table,&owner)==NOVA_PROCESS_OK);
+    uint8_t snapshot[4096];
+    memcpy(snapshot,frames[0],sizeof(snapshot));
+    struct physical_fault foreign={.target=frames[3],
+                                    .reported=UINT64_C(0x200000)};
+    pid=88;
+    assert(nova_process_stage(&table,"FOREIGN",read_image,NULL,IMAGE_SIZE,
+           alloc_page,free_page,faulty_physical,&foreign,&pid)==NOVA_PROCESS_BAD_FRAME);
+    assert(pid==0 && active_pages==4 && used[3]);
+    assert(memcmp(snapshot,frames[0],sizeof(snapshot))==0);
+    for(unsigned i=0;i<4096;i++)assert(frames[3][i]==0xD9);
+    free_page(NULL,frames[3]); /* manual recovery of deliberately leaked page */
+    assert(nova_process_drop(&table,owner,free_page,physical_page,NULL));
+    assert(active_pages==0);
+}
+static void test_unverifiable_physical_frame_fails_closed(void){
+    const uint64_t invalid[]={0,0x200001u,UINT64_C(0x0010000000000000)};
+    for(unsigned k=0;k<sizeof(invalid)/sizeof(invalid[0]);k++){
+        fixture();
+        struct nova_process_table table={0};
+        uint32_t pid=88;
+        struct physical_fault bad={.target=frames[0],.reported=invalid[k]};
+        assert(nova_process_stage(&table,"INVALID",read_image,NULL,IMAGE_SIZE,
+               alloc_page,free_page,faulty_physical,&bad,&pid)==NOVA_PROCESS_BAD_FRAME);
+        assert(pid==0 && active_pages==1 && used[0]);
+        for(unsigned i=0;i<4096;i++)assert(frames[0][i]==0xD9);
+        free_page(NULL,frames[0]);
+    }
+    fixture();
+    struct nova_process_table table={0};
+    uint32_t pid=88;
+    struct physical_fault denied={.target=frames[0],.deny=true};
+    assert(nova_process_stage(&table,"DENIED",read_image,NULL,IMAGE_SIZE,
+           alloc_page,free_page,faulty_physical,&denied,&pid)==NOVA_PROCESS_BAD_FRAME);
+    assert(active_pages==1 && pid==0);
+    free_page(NULL,frames[0]);
+    assert(nova_process_stage(&table,"NO_PHYS",read_image,NULL,IMAGE_SIZE,
+           alloc_page,free_page,NULL,NULL,&pid)==NOVA_PROCESS_BAD_INPUT);
+    assert(active_pages==0);
+}
+static void test_physical_identity_rechecked_on_drop_and_stage(void){
+    fixture();
+    struct nova_process_table table={0};
+    uint32_t pid=0;
+    assert(stage(&table,&pid)==NOVA_PROCESS_OK);
+    struct nova_process_image *p=nova_process_find(&table,pid);
+    assert(p && active_pages==3);
+    uint8_t *saved[3]={p->pages[0].frame,p->pages[1].frame,p->pages[2].frame};
+    const uint64_t original=p->pages[0].physical_page;
+    assert(!nova_process_drop(&table,pid,free_page,NULL,NULL));
+    assert(nova_process_find(&table,pid)==p && active_pages==3);
+    p->pages[0].physical_page=p->pages[1].physical_page;
+    assert(!nova_process_drop(&table,pid,free_page,physical_page,NULL));
+    assert(active_pages==3 && nova_process_find(&table,pid)==NULL);
+    for(unsigned i=0;i<3;i++)free_page(NULL,saved[i]);
+    assert(active_pages==0);
+
+    assert(stage(&table,&pid)==NOVA_PROCESS_OK);
+    p=nova_process_find(&table,pid);
+    assert(p);
+    p->pages[0].physical_page=UINT64_C(0x200000); /* correct initially */
+    struct physical_fault changed={.target=p->pages[0].frame,
+                                   .reported=UINT64_C(0x210000)};
+    assert(!nova_process_drop(&table,pid,free_page,faulty_physical,&changed));
+    assert(active_pages==3);
+    for(unsigned i=0;i<3;i++)free_page(NULL,p->pages[i].frame);
+    assert(active_pages==0);
+    (void)original;
+
+    assert(stage(&table,&pid)==NOVA_PROCESS_OK);
+    p=nova_process_find(&table,pid);
+    assert(p);
+    uint8_t snapshot[4096];
+    memcpy(snapshot,p->pages[0].frame,sizeof(snapshot));
+    p->pages[0].physical_page=p->pages[1].physical_page;
+    uint32_t rejected=99;
+    assert(stage(&table,&rejected)==NOVA_PROCESS_BAD_FRAME);
+    assert(rejected==0 && active_pages==4);
+    assert(memcmp(snapshot,p->pages[0].frame,sizeof(snapshot))==0);
+    free_page(NULL,frames[3]); /* fresh, rejected and deliberately leaked */
+    p->pages[0].physical_page=UINT64_C(0x200000);
+    assert(nova_process_drop(&table,pid,free_page,physical_page,NULL));
+    assert(active_pages==0);
+}
 int main(void){
     test_staging();
     test_failures();
     test_borrowed_frame_rejected_before_write();
     test_corrupted_image_teardown_fails_closed();
+    test_physical_alias_rejected_before_copy();
+    test_unverifiable_physical_frame_fails_closed();
+    test_physical_identity_rechecked_on_drop_and_stage();
     assert(active_pages==0);
     puts("Staged process images: validated ELF, zeroed BSS, separate frames, rollback, limits and release OK.");
     return 0;
