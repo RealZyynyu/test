@@ -60,6 +60,7 @@ disk filesystem.
 - `kernel/vfs.h` — explicit RAM:/ and read-only DISK:/ storage namespace
 - `kernel/elf64.h` — validated ELF64 executable metadata (never executes)
 - `kernel/process_image.h` — staged image frames, cleanup and resource limits
+- `kernel/paging.h` — offline PML4 user-page mapping constructor (never CR3)
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -169,6 +170,39 @@ NOVA does not yet create protected CPU page tables, enforce privileges,
 use a TSS, switch to ring 3, perform context switching, support syscalls,
 or execute the bytes of a program. It would be inaccurate and unsafe to
 claim that this work provides actual isolation or multitasking.
+
+## Offline four-level x86-64 page tables (development only)
+
+A new `kernel/paging.h` implements a bounded constructor for candidate
+x86-64 **PML4 → PDPT → PD → PT** structures belonging to staged ELF images.
+It obtains physical page frames from NOVA's existing PMM, verifies ownership,
+encodes virtual→physical translations, and sets page-table USER, RW and NX
+bits from validated ELF segment metadata. It rejects W+X mappings,
+overlapping virtual pages, invalid physical frames, invalid user addresses,
+and insufficient memory. Independent images receive different PML4 roots.
+All owned page-table pages are released on `PDROP` or on failure.
+
+Development terminal commands, **not available in any released ISO**:
+
+```text
+PSTAGE DISK:/APP.ELF  # validates + stages ELF + prepares OFFLINE page tables
+PLIST
+PINFO 1
+PTINFO 1              # number of page tables and mapped pages (offline)
+PDROP 1               # releases page tables and image frames
+```
+
+**Do not activate these tables or switch CR3.** They intentionally contain
+*no kernel mappings* and no user stack, process state, TSS, or safe fault
+handling. The NX bit is only data in memory, not verified in the CPU;
+enforcement requires correct EFER.NXE and secure CR3/ring-3 transition.
+There is still **no actual isolation, app execution or preemptive scheduling**.
+
+Host tests construct and inspect physical-address tables with synthetic
+page-aligned frames, including W^X, NX, address validation, separate PML4
+roots, allocation-failure rollback, double-mapping refusal and full
+cleanup. GitHub Actions additionally compiles the complete freestanding
+kernel without building an ISO.
 
 ## Important missing features / final-release blockers
 
