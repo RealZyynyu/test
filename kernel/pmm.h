@@ -198,7 +198,7 @@ static bool nova_pmm_frame_role(const void *ptr,enum nova_frame_role *out){
     *out=(enum nova_frame_role)nova_pmm.roles[i];
     return true;
 }
-static bool nova_pmm_physical_role(const void *ptr,enum nova_frame_role role,
+static inline bool nova_pmm_physical_role(const void *ptr,enum nova_frame_role role,
                                    uint64_t *physical){
     enum nova_frame_role actual=NOVA_FRAME_FREE;
     return nova_pmm_role_valid(role)&&
