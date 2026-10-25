@@ -42,6 +42,7 @@ int main(void){
     processes.slots[0].staged=true;
     processes.slots[0].pid=42;
     struct nova_cap_registry rights={0};
+    struct nova_save_store saves={0};
     struct nova_vfs vfs={.disk=NULL};
     struct nova_vfs_entry first_entry;
     assert(nova_vfs_list(&vfs,"RAM:/",0,&first_entry));
@@ -50,11 +51,12 @@ int main(void){
     assert(!nova_fat16_mount(&nonexistent,NULL,NULL,0));
     assert(nova_elf_result_name(NOVA_ELF_OK)[0]!=0);
     struct nova_broker_context ctx={
-        .rights=&rights,.processes=&processes,.vfs=&vfs};
+        .rights=&rights,.processes=&processes,.vfs=&vfs,.saves=&saves};
     struct nova_broker_request req={0};
     struct nova_broker_response out;
 
     assert(nova_cap_register(&rights,&processes,42));
+    assert(nova_save_register(&saves,&processes,42));
     assert(nova_cap_current(&rights,&processes,42)==0);
     req.operation=NOVA_BROKER_VERSION;
     expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
@@ -129,7 +131,62 @@ int main(void){
     req.operation=NOVA_BROKER_READ;
     assert(nova_cap_revoke_trusted(&rights,&processes,42,NOVA_CAP_RAM_READ));
     expect(&ctx,42,&req,&out,NOVA_BROKER_DENIED);
+    /* Independent private RAM saves: no program can read another's blob. */
+    processes.slots[1].staged=true;
+    processes.slots[1].pid=77;
+    assert(nova_cap_register(&rights,&processes,77));
+    assert(nova_save_register(&saves,&processes,77));
+    req=(struct nova_broker_request){0};
+    req.operation=NOVA_BROKER_SAVE_WRITE;req.length=4;
+    memcpy(req.bytes,"ONE!",4);
+    expect(&ctx,42,&req,&out,NOVA_BROKER_DENIED);
+    assert(nova_cap_grant_trusted(&rights,&processes,42,NOVA_CAP_APP_SAVE));
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(out.length==4);
+    req.operation=NOVA_BROKER_SAVE_INFO;req.length=0;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(out.file_size==4);
+    req.operation=NOVA_BROKER_SAVE_READ;req.length=4;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(!memcmp(out.bytes,"ONE!",4));
+    expect(&ctx,77,&req,&out,NOVA_BROKER_DENIED);
+    assert(nova_cap_grant_trusted(&rights,&processes,77,NOVA_CAP_APP_SAVE));
+    expect(&ctx,77,&req,&out,NOVA_BROKER_IO_ERROR); /* no save for 77 */
+    req.operation=NOVA_BROKER_SAVE_WRITE;req.length=4;
+    memcpy(req.bytes,"TWO!",4);
+    expect(&ctx,77,&req,&out,NOVA_BROKER_OK);
+    req.operation=NOVA_BROKER_SAVE_READ;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(!memcmp(out.bytes,"ONE!",4));
+    expect(&ctx,77,&req,&out,NOVA_BROKER_OK);
+    assert(!memcmp(out.bytes,"TWO!",4));
+    req.path[0]='X';
+    expect(&ctx,77,&req,&out,NOVA_BROKER_INVALID_REQUEST);
+    req.path[0]=0;
+    req.length=65;
+    expect(&ctx,77,&req,&out,NOVA_BROKER_INVALID_REQUEST);
+    req.length=4;req.offset=62;
+    expect(&ctx,77,&req,&out,NOVA_BROKER_IO_ERROR);
+    req.offset=0;req.length=0;
+    expect(&ctx,77,&req,&out,NOVA_BROKER_INVALID_REQUEST);
+    /* An expired PID must never pass rights or saves to a reused table slot. */
+    assert(nova_save_unregister(&saves,42));
     assert(nova_cap_unregister(&rights,42));
+    processes.slots[0].staged=false;
+    processes.slots[0].pid=0;
+    processes.slots[0].staged=true;
+    processes.slots[0].pid=99;
+    assert(nova_cap_register(&rights,&processes,99));
+    assert(nova_save_register(&saves,&processes,99));
+    req.operation=NOVA_BROKER_SAVE_READ;req.length=4;
+    expect(&ctx,99,&req,&out,NOVA_BROKER_DENIED);
+    assert(nova_cap_grant_trusted(&rights,&processes,99,NOVA_CAP_APP_SAVE));
+    expect(&ctx,99,&req,&out,NOVA_BROKER_IO_ERROR); /* cleared on reuse */
+    assert(nova_save_unregister(&saves,99));
+    assert(nova_cap_unregister(&rights,99));
+    assert(nova_save_unregister(&saves,77));
+    assert(nova_cap_unregister(&rights,77));
+    /* The previous synthetic PID is no longer active. */
     req.operation=NOVA_BROKER_VERSION;req.length=0;
     expect(&ctx,42,&req,&out,NOVA_BROKER_DENIED);
     assert(nova_vfs_remove(&vfs,"RAM:/GAME.TXT"));
