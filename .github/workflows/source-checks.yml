@@ -72,6 +72,22 @@ jobs:
             -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_frame_tickets.c -o /tmp/nova-frame-tickets-sanitized
           /tmp/nova-frame-tickets-sanitized
+  image-tickets:
+    name: Staged ELF generation tickets and rollback (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate ELF frame ABA protection using GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs tests/test_image_tickets.c -o /tmp/nova-image-tickets
+          /tmp/nova-image-tickets
+      - name: Validate stale tickets and rollback using Clang sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_image_tickets.c -o /tmp/nova-image-tickets-sanitized
+          /tmp/nova-image-tickets-sanitized
   safety-policy:
     name: Safety policy checks (no ISO)
     runs-on: ubuntu-24.04
