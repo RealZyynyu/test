@@ -18,6 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "capabilities.h"
+#include "app_storage.h"
 
 #define NOVA_BROKER_ABI_VERSION 1u
 #define NOVA_BROKER_MAX_BYTES 64u
@@ -27,7 +28,10 @@ enum nova_broker_operation {
     NOVA_BROKER_VERSION=1,
     NOVA_BROKER_READ=2,
     NOVA_BROKER_WRITE_RAM=3,
-    NOVA_BROKER_STAT=4
+    NOVA_BROKER_STAT=4,
+    NOVA_BROKER_SAVE_READ=5,
+    NOVA_BROKER_SAVE_WRITE=6,
+    NOVA_BROKER_SAVE_INFO=7
 };
 enum nova_broker_status {
     NOVA_BROKER_OK=0,
@@ -55,6 +59,7 @@ struct nova_broker_context {
     struct nova_cap_registry *rights;
     struct nova_process_table *processes;
     const struct nova_vfs *vfs;
+    struct nova_save_store *saves; /* optional for ordinary file requests */
 };
 
 /* This is not a zero-copy or an asynchronous syscall. A kernel copies request
@@ -95,6 +100,63 @@ static inline enum nova_broker_status nova_broker_dispatch(
             return response->status;
         }
         response->version=NOVA_BROKER_ABI_VERSION;
+        response->status=NOVA_BROKER_OK;
+        return response->status;
+    }
+    if(request->operation==NOVA_BROKER_SAVE_READ||
+       request->operation==NOVA_BROKER_SAVE_WRITE||
+       request->operation==NOVA_BROKER_SAVE_INFO){
+        /* Saves are addressed by trusted caller identity, not paths or PIDs
+         * embedded in user-controlled requests. */
+        for(size_t k=0;k<NOVA_BROKER_PATH_CAP;k++)
+            if(request->path[k]!=0)return response->status;
+        if(request->length>NOVA_BROKER_MAX_BYTES||
+           request->offset>SIZE_MAX)return response->status;
+        if(request->operation==NOVA_BROKER_SAVE_INFO &&
+           (request->offset!=0||request->length!=0))
+            return response->status;
+        if(request->operation==NOVA_BROKER_SAVE_WRITE &&
+           request->offset!=0)return response->status;
+        if(request->operation==NOVA_BROKER_SAVE_READ &&
+           request->length==0)return response->status;
+        if(!nova_cap_check(context->rights,context->processes,trusted_pid,
+                           NOVA_CAP_APP_SAVE)){
+            response->status=NOVA_BROKER_DENIED;
+            return response->status;
+        }
+        if(!context->saves){
+            response->status=NOVA_BROKER_IO_ERROR;
+            return response->status;
+        }
+        if(request->operation==NOVA_BROKER_SAVE_INFO){
+            uint32_t size=0;
+            if(!nova_save_size(context->saves,context->rights,
+                 context->processes,trusted_pid,&size)){
+                response->status=NOVA_BROKER_IO_ERROR;
+                return response->status;
+            }
+            response->file_size=size;
+            response->status=NOVA_BROKER_OK;
+            return response->status;
+        }
+        if(request->operation==NOVA_BROKER_SAVE_WRITE){
+            if(!nova_save_replace(context->saves,context->rights,
+                 context->processes,trusted_pid,request->bytes,request->length)){
+                response->status=NOVA_BROKER_IO_ERROR;
+                return response->status;
+            }
+        }else{
+            uint8_t scratch[NOVA_BROKER_MAX_BYTES]={0};
+            if(!nova_save_read(context->saves,context->rights,
+                 context->processes,trusted_pid,(size_t)request->offset,
+                 scratch,request->length)){
+                response->status=NOVA_BROKER_IO_ERROR;
+                return response->status;
+            }
+            for(uint32_t i=0;i<request->length;i++)
+                response->bytes[i]=scratch[i];
+        }
+        response->length=request->length;
         response->status=NOVA_BROKER_OK;
         return response->status;
     }
