@@ -861,7 +861,8 @@ static void shell_execute(void){
             uint32_t pid=0;
             enum nova_process_result status=nova_process_stage(
                 &nova_processes,path,nova_elf_from_vfs,&source,file_size,
-                nova_process_page_allocate,nova_process_page_release,NULL,&pid);
+                nova_process_page_allocate,nova_process_page_release,
+                nova_process_page_phys,NULL,&pid);
             if(status==NOVA_PROCESS_OK){
                 struct nova_process_image *img=nova_process_find(&nova_processes,pid);
                 size_t slot=nova_process_index(img);
@@ -878,20 +879,20 @@ static void shell_execute(void){
                             (void)nova_cap_unregister(&nova_app_policy,pid);
                             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                             (void)nova_process_drop(&nova_processes,pid,
-                                nova_process_page_release,NULL);
+                                nova_process_page_release,nova_process_page_phys,NULL);
                             shell_result("PRIVATE SAVE SLOT UNAVAILABLE");
                         }
                     }else{
                         nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                         (void)nova_process_drop(&nova_processes,pid,
-                            nova_process_page_release,NULL);
+                            nova_process_page_release,nova_process_page_phys,NULL);
                         shell_result("CAPABILITY REGISTRY FULL");
                     }
                 }else{
                     /* Both stack and table frames roll back on any failure. */
                     nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                     (void)nova_process_drop(&nova_processes,pid,
-                        nova_process_page_release,NULL);
+                        nova_process_page_release,nova_process_page_phys,NULL);
                     shell_result(nova_pt_status_name(mapped));
                 }
             }else shell_result(nova_process_result_name(status));
@@ -984,7 +985,7 @@ static void shell_execute(void){
             (void)nova_cap_unregister(&nova_app_policy,pid);
             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
             bool ok=nova_process_drop(&nova_processes,pid,
-                nova_process_page_release,NULL);
+                nova_process_page_release,nova_process_page_phys,NULL);
             shell_result(ok?"IMAGE+STACK+TABLES RELEASED":"RELEASE FAILED");
         }
     }
