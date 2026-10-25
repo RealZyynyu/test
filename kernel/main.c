@@ -21,6 +21,7 @@
 #include "process_image.h"
 #include "paging.h"
 #include "user_space.h"
+#include "game_input.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -44,6 +45,8 @@ static volatile uint64_t requests_end[] = LIMINE_REQUESTS_END_MARKER;
 
 static struct limine_framebuffer *fb;
 static int screen = 1, player = 9, coin = 22, score = 0;
+static int arcade_paused=0;
+static struct nova_game_input nova_game_keys;
 static const char *names[] = {"HOME","FILES","SYSTEM","ARCADE","HELP"};
 
 static inline uint8_t inb(uint16_t port) {
@@ -429,7 +432,7 @@ static void app_content(void){
         text(402,607,"AUTO-SAVED TO NOTES.TXT IN RAM  -  ERASED ON REBOOT",1,secondary);
     }else if(screen==3){
         text(401,191,"ARCADE",3,fg);
-        text(402,231,"WASD OR ARROWS TO MOVE  -  COLLECT GOLD",1,secondary);
+        text(402,231,"WASD / ARROWS TO MOVE  -  P TO PAUSE",1,secondary);
         roundrect(393,257,679,338,16,pale);
         for(int i=0;i<48;i++){
             int x=429+(i%8)*78, y=272+(i/8)*48;
@@ -437,6 +440,7 @@ static void app_content(void){
             if(i==player)roundrect(x+24,y+10,21,21,6,0xF3F6FF);
             if(i==coin)circle(x+34,y+20,11,11,0xFFF3C4);
         }
+        if(arcade_paused)text(741,610,"PAUSED - PRESS P",1,fg);
         text(409,610,"SCORE:",1,fg);
         number(462,607,(unsigned int)score,2,night?0xF4D38A:0x5275B9);
     }else if(screen==4){
@@ -1007,6 +1011,7 @@ static void mouse_click(int x,int y){
     }
 }
 static void keyboard_scancode(uint8_t key){
+    enum nova_game_action game_event=nova_game_scan(&nova_game_keys,key);
     static bool extended=false;
     if(key==0xE0){extended=true;return;}
     if(key&0x80){extended=false;return;}
@@ -1033,12 +1038,17 @@ static void keyboard_scancode(uint8_t key){
         }
     }
     if(screen==3){
-        int prev=player;
-        if(key==0x1E || (extended&&key==0x4B))move(-1,0);
-        if(key==0x20 || (extended&&key==0x4D))move(1,0);
-        if(key==0x11 || (extended&&key==0x48))move(0,-1);
-        if(key==0x1F || (extended&&key==0x50))move(0,1);
-        if(prev!=player)changed=1;
+        if(game_event==NOVA_GAME_PAUSE){
+            arcade_paused=!arcade_paused;
+            changed=1;
+        }else if(!arcade_paused){
+            int prev=player;
+            if(game_event==NOVA_GAME_LEFT)move(-1,0);
+            if(game_event==NOVA_GAME_RIGHT)move(1,0);
+            if(game_event==NOVA_GAME_UP)move(0,-1);
+            if(game_event==NOVA_GAME_DOWN)move(0,1);
+            if(prev!=player)changed=1;
+        }
     }
     extended=false;
     if(changed)redraw();
