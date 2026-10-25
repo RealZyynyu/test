@@ -371,6 +371,171 @@ static void test_forged_stack_ticket_never_zeroed(void){
     assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
     assert(nova_pmm.in_use==0);
 }
+
+/* Generation-checked PAGE_TABLE frames: no real CR3 or user execution. */
+static unsigned table_ticket_budget=UINT32_MAX;
+static struct nova_frame_ticket forged_table_ticket;
+static bool ticket_table_alloc(void *ctx,void **frame,uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation||table_ticket_budget==0)return false;
+    struct nova_frame_ticket t={0};
+    if(!nova_page_alloc_ticket(NOVA_FRAME_PAGE_TABLE,&t))return false;
+    if(table_ticket_budget!=UINT32_MAX)table_ticket_budget--;
+    *frame=t.frame;*generation=t.generation;
+    return true;
+}
+static bool ticket_table_phys(void *ctx,const void *frame,
+                              uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket t={
+        .frame=(void *)frame,.generation=generation,.role=NOVA_FRAME_PAGE_TABLE
+    };
+    return nova_pmm_physical_ticket(&t,out);
+}
+static bool ticket_table_free(void *ctx,void *frame,uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket t={
+        .frame=frame,.generation=generation,.role=NOVA_FRAME_PAGE_TABLE
+    };
+    return nova_page_free_ticket(&t);
+}
+static struct nova_pt_ops fully_guarded_ops(void){
+    struct nova_pt_ops result=ticket_ops();
+    result.table_ticket_allocate=ticket_table_alloc;
+    result.table_ticket_physical_address=ticket_table_phys;
+    result.table_ticket_release=ticket_table_free;
+    return result;
+}
+static void test_guarded_table_lifecycle(void){
+    reset_pmm();
+    table_ticket_budget=UINT32_MAX;
+    ticket_budget=UINT32_MAX;
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=fully_guarded_ops();
+    struct nova_pt_ops partial=guarded;
+    partial.table_ticket_release=NULL;
+    struct nova_user_space space={0};
+    const uint32_t before=nova_pmm.in_use;
+    assert(nova_user_space_prepare(&space,&partial,image)==NOVA_PT_INVALID);
+    assert(nova_pmm.in_use==before);
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OK);
+    assert(space.page_tables.tables_guarded && space.stack_guarded);
+    assert(nova_user_stack_guard_is_unmapped(&space));
+    for(uint16_t i=0;i<space.page_tables.tables_used;i++){
+        assert(space.page_tables.table_generation[i]!=0);
+        struct nova_frame_ticket t={
+            .frame=space.page_tables.tables[i],
+            .generation=space.page_tables.table_generation[i],
+            .role=NOVA_FRAME_PAGE_TABLE
+        };
+        assert(nova_pmm_ticket_valid(&t));
+    }
+    struct nova_pt_ops stack_only=ticket_ops();
+    assert(!nova_user_space_frames_releasable(&space,&stack_only));
+    assert(nova_user_space_frames_releasable(&space,&guarded));
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==image->page_count);
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
+static void test_stale_table_ticket_blocks_all_cleanup(void){
+    reset_pmm();
+    table_ticket_budget=UINT32_MAX;
+    ticket_budget=UINT32_MAX;
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=fully_guarded_ops();
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OK);
+    struct nova_user_space original=space;
+    struct nova_frame_ticket stale={
+        .frame=space.page_tables.tables[0],
+        .generation=space.page_tables.table_generation[0],
+        .role=NOVA_FRAME_PAGE_TABLE
+    };
+    assert(nova_page_free_ticket(&stale));
+    struct nova_frame_ticket replacement={0};
+    assert(nova_page_alloc_ticket(NOVA_FRAME_PAGE_TABLE,&replacement));
+    assert(replacement.frame==stale.frame);
+    assert(replacement.generation!=stale.generation);
+    memset(replacement.frame,0x6D,4096);
+    const uint32_t before=nova_pmm.in_use;
+    assert(!nova_user_space_frames_releasable(&space,&guarded));
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==before);
+    assert(nova_pmm_ticket_valid(&replacement));
+    for(unsigned i=0;i<4096;i++)
+        assert(((uint8_t *)replacement.frame)[i]==0x6D);
+    /* Only this test fixture knows the remaining valid owners. */
+    for(uint16_t i=1;i<original.page_tables.tables_used;i++)
+        assert(ticket_table_free(NULL,original.page_tables.tables[i],
+                                 original.page_tables.table_generation[i]));
+    for(uint32_t i=0;i<original.stack_count;i++)
+        assert(ticket_stack_free(NULL,original.stack_frames[i],
+                                 original.stack_generation[i]));
+    assert(nova_page_free_ticket(&replacement));
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
+static void test_corrupt_table_ticket_and_rollback(void){
+    reset_pmm();
+    table_ticket_budget=UINT32_MAX;
+    ticket_budget=UINT32_MAX;
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=fully_guarded_ops();
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OK);
+    struct nova_user_space original=space;
+    const uint32_t before=nova_pmm.in_use;
+    space.page_tables.table_generation[1]++;
+    assert(!nova_user_space_frames_releasable(&space,&guarded));
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==before);
+    space=original;
+    nova_user_space_destroy(&space,&guarded);
+    assert(nova_pmm.in_use==image->page_count);
+    table_ticket_budget=2;
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_OUT_OF_MEMORY);
+    assert(nova_pmm.in_use==image->page_count);
+    table_ticket_budget=UINT32_MAX;
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
+static bool forge_table_alloc(void *ctx,void **frame,uint64_t *generation){
+    if(!ticket_table_alloc(ctx,frame,generation))return false;
+    forged_table_ticket=(struct nova_frame_ticket){
+        .frame=*frame,.generation=*generation,.role=NOVA_FRAME_PAGE_TABLE
+    };
+    memset(*frame,0xA9,4096);
+    (*generation)++;
+    return true;
+}
+static void test_forged_table_ticket_never_zeroed(void){
+    reset_pmm();
+    table_ticket_budget=UINT32_MAX;
+    ticket_budget=UINT32_MAX;
+    forged_table_ticket=(struct nova_frame_ticket){0};
+    struct nova_process_table processes={0};
+    uint32_t pid=stage_ticket_fixture(&processes);
+    struct nova_process_image *image=nova_process_find(&processes,pid);
+    struct nova_pt_ops guarded=fully_guarded_ops();
+    guarded.table_ticket_allocate=forge_table_alloc;
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&guarded,image)==NOVA_PT_BAD_FRAME);
+    assert(!space.page_tables.tables_used&&!space.stack_count&&!space.prepared);
+    assert(nova_pmm_ticket_valid(&forged_table_ticket));
+    for(unsigned i=0;i<4096;i++)
+        assert(((uint8_t *)forged_table_ticket.frame)[i]==0xA9);
+    assert(nova_pmm.in_use==image->page_count+1u);
+    assert(nova_page_free_ticket(&forged_table_ticket));
+    assert(nova_process_drop(&processes,pid,free_image,phys_image,NULL));
+    assert(nova_pmm.in_use==0);
+}
 int main(void){
     test_role_transitions_and_corruption();
     test_offline_role_integration();
@@ -378,6 +543,10 @@ int main(void){
     test_stale_stack_ticket_blocks_all_cleanup();
     test_corrupt_stack_ticket_and_rollback();
     test_forged_stack_ticket_never_zeroed();
-    puts("PMM roles and stack generation tickets: ABA, corruption, forged allocation, rollback and legacy checks OK.");
+    test_guarded_table_lifecycle();
+    test_stale_table_ticket_blocks_all_cleanup();
+    test_corrupt_table_ticket_and_rollback();
+    test_forged_table_ticket_never_zeroed();
+    puts("PMM roles and stack/table generation tickets: ABA, corruption, forged allocation, rollback and legacy checks OK.");
     return 0;
 }

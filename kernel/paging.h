@@ -35,7 +35,7 @@
 typedef void *(*nova_pt_alloc_fn)(void *);
 typedef void (*nova_pt_free_fn)(void *,void *);
 typedef bool (*nova_pt_phys_fn)(void *,const void *,uint64_t *);
-/* Optional stack generation callbacks. A ticket must come from the
+/* Optional table/stack generation callbacks. A ticket must come from the
  * allocator, never be reconstructed from a stale pointer. */
 typedef bool (*nova_pt_ticket_alloc_fn)(void *,void **,uint64_t *);
 typedef bool (*nova_pt_ticket_phys_fn)(void *,const void *,uint64_t,uint64_t *);
@@ -51,6 +51,9 @@ struct nova_pt_ops {
     nova_pt_free_fn release;
     nova_pt_phys_fn physical_address;
     nova_pt_phys_fn table_physical_address;
+    nova_pt_ticket_alloc_fn table_ticket_allocate;
+    nova_pt_ticket_phys_fn table_ticket_physical_address;
+    nova_pt_ticket_free_fn table_ticket_release;
     nova_pt_alloc_fn stack_allocate;
     nova_pt_free_fn stack_release;
     nova_pt_phys_fn stack_physical_address;
@@ -91,6 +94,8 @@ struct nova_page_table {
     uint64_t pending_leaf_physical;
     void *tables[NOVA_PT_MAX_TABLES];
     uint64_t table_physical[NOVA_PT_MAX_TABLES];
+    uint64_t table_generation[NOVA_PT_MAX_TABLES];
+    bool tables_guarded; /* generation-checked table frame ownership */
     bool prepared;
 };
 static inline const char *nova_pt_status_name(enum nova_pt_result r){
@@ -123,8 +128,19 @@ static inline enum nova_pt_result nova_pt_new_table(
     struct nova_page_table *tree,const struct nova_pt_ops *ops,uint64_t **result,
     uint64_t *physical){
     if(tree->tables_used>=NOVA_PT_MAX_TABLES)return NOVA_PT_RESOURCE_LIMIT;
-    void *page=ops->allocate(ops->context);
-    if(!page)return NOVA_PT_OUT_OF_MEMORY;
+    void *page=NULL;
+    uint64_t generation=0;
+    if(tree->tables_guarded){
+        if(!ops->table_ticket_allocate||!ops->table_ticket_physical_address||
+           !ops->table_ticket_release)return NOVA_PT_INVALID;
+        if(!ops->table_ticket_allocate(ops->context,&page,&generation))
+            return NOVA_PT_OUT_OF_MEMORY;
+        /* A forged/empty ticket cannot authorize writes or cleanup. */
+        if(!page||!generation)return NOVA_PT_BAD_FRAME;
+    }else{
+        page=ops->allocate(ops->context);
+        if(!page)return NOVA_PT_OUT_OF_MEMORY;
+    }
     /* First check pointer identity, before invoking an unreliable physical
      * address callback or freeing anything. Borrowed frames are NOT ours. */
     for(uint16_t i=0;i<tree->tables_used;i++)
@@ -133,8 +149,11 @@ static inline enum nova_pt_result nova_pt_new_table(
         if(tree->protected_frames[i]==page)return NOVA_PT_BAD_FRAME;
     if(tree->pending_leaf_frame==page)return NOVA_PT_BAD_FRAME;
     uint64_t phys=0;
-    if(!nova_pt_table_physical(ops)(ops->context,page,&phys)||
-       !nova_pt_valid_phys(phys)||((uintptr_t)page&7u)!=0){
+    if(!(tree->tables_guarded ?
+         ops->table_ticket_physical_address(ops->context,page,generation,&phys) :
+         nova_pt_table_physical(ops)(ops->context,page,&phys)) ||
+       !nova_pt_valid_phys(phys)||
+       ((uintptr_t)page&(NOVA_PT_PAGE_SIZE-1u))!=0){
         /* Cannot establish ownership of a suspect allocation. Releasing it
          * could double-free an image/stack frame through a faulty callback.
          * Fail closed, potentially leaking the suspect frame instead. */
@@ -152,6 +171,7 @@ static inline enum nova_pt_result nova_pt_new_table(
     uint16_t n=tree->tables_used++;
     tree->tables[n]=page;
     tree->table_physical[n]=phys;
+    tree->table_generation[n]=generation;
     *result=entries;*physical=phys;
     return NOVA_PT_OK;
 }
@@ -171,6 +191,9 @@ static inline bool nova_pt_tables_releasable(
        tree->protected_count>NOVA_PROCESS_MAX_PAGES||
        tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
        tree->pending_leaf_frame||tree->pending_leaf_physical)return false;
+    if(tree->tables_guarded &&
+       (!ops->table_ticket_allocate||!ops->table_ticket_physical_address||
+        !ops->table_ticket_release))return false;
     if(tree->tables_used &&
        tree->root_physical!=tree->table_physical[0])return false;
     for(uint16_t i=0;i<tree->tables_used;i++){
@@ -178,7 +201,12 @@ static inline bool nova_pt_tables_releasable(
         uint64_t phys=0;
         if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
            !nova_pt_valid_phys(tree->table_physical[i])||
-           !nova_pt_table_physical(ops)(ops->context,frame,&phys)||
+           (tree->tables_guarded ?
+             (!tree->table_generation[i] ||
+              !ops->table_ticket_physical_address(ops->context,frame,
+                   tree->table_generation[i],&phys)) :
+             (tree->table_generation[i]!=0 ||
+              !nova_pt_table_physical(ops)(ops->context,frame,&phys))) ||
            phys!=tree->table_physical[i])return false;
         for(uint16_t j=0;j<i;j++)
             if(frame==tree->tables[j]||
@@ -195,8 +223,13 @@ static inline void nova_pt_destroy(struct nova_page_table *tree,
                                     const struct nova_pt_ops *ops){
     if(!tree)return;
     if(nova_pt_tables_releasable(tree,ops)){
-        for(uint16_t i=0;i<tree->tables_used;i++)
-            ops->release(ops->context,tree->tables[i]);
+        for(uint16_t i=0;i<tree->tables_used;i++){
+            if(tree->tables_guarded)
+                (void)ops->table_ticket_release(ops->context,tree->tables[i],
+                                                tree->table_generation[i]);
+            else
+                ops->release(ops->context,tree->tables[i]);
+        }
     }
     /* Even when ownership cannot be verified, discard the suspect tree.
      * Retaining it could allow accidental reuse of compromised metadata. */
@@ -205,10 +238,13 @@ static inline void nova_pt_destroy(struct nova_page_table *tree,
 static inline enum nova_pt_result nova_pt_map_one(
     struct nova_page_table *tree,const struct nova_pt_ops *ops,
     uint64_t va,uint64_t physical,uint32_t flags){
-    if(!tree||!tree->root_physical||!nova_pt_valid_user(va)||
+    if(!tree||!ops||!tree->root_physical||!nova_pt_valid_user(va)||
        !nova_pt_valid_phys(physical) || (flags&~7u) ||
        ((flags&3u)==3u) || tree->tables_used>NOVA_PT_MAX_TABLES ||
-       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES)return NOVA_PT_INVALID;
+       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES ||
+       (tree->tables_guarded &&
+        (!ops->table_ticket_allocate||!ops->table_ticket_physical_address||
+         !ops->table_ticket_release)))return NOVA_PT_INVALID;
     if(tree->mapped_pages>=NOVA_PT_MAX_MAPPED_PAGES)
         return NOVA_PT_RESOURCE_LIMIT;
     /* Same physical frame must not have a writable and executable alias. */
@@ -261,7 +297,14 @@ static inline enum nova_pt_result nova_pt_prepare(
        !ops->physical_address||!image||!image->staged||!image->page_count ||
        image->page_count>NOVA_PROCESS_MAX_PAGES ||
        tree->tables_used||tree->prepared)return NOVA_PT_INVALID;
+    const bool guarded=ops->table_ticket_allocate||
+                       ops->table_ticket_physical_address||
+                       ops->table_ticket_release;
+    if(guarded && (!ops->table_ticket_allocate||
+                   !ops->table_ticket_physical_address||
+                   !ops->table_ticket_release))return NOVA_PT_INVALID;
     *tree=(struct nova_page_table){0};
+    tree->tables_guarded=guarded;
     /* Preflight every leaf before ANY table allocation can overwrite it.
      * Physical aliases are rejected even when pointers differ. This also
      * protects against a buggy allocator handing us a staged-image frame.

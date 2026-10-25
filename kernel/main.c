@@ -697,6 +697,32 @@ static void nova_table_page_release(void *ctx,void *page){
 static bool nova_table_page_phys(void *ctx,const void *page,uint64_t *out){
     (void)ctx;return nova_pmm_physical_role(page,NOVA_FRAME_PAGE_TABLE,out);
 }
+static bool nova_table_ticket_allocate(void *ctx,void **frame,
+                                       uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation)return false;
+    *frame=NULL;*generation=0;
+    struct nova_frame_ticket ticket={0};
+    if(!nova_page_alloc_ticket(NOVA_FRAME_PAGE_TABLE,&ticket))return false;
+    *frame=ticket.frame;*generation=ticket.generation;
+    return true;
+}
+static bool nova_table_ticket_physical(void *ctx,const void *frame,
+                                       uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=(void *)frame,.generation=generation,.role=NOVA_FRAME_PAGE_TABLE
+    };
+    return nova_pmm_physical_ticket(&ticket,out);
+}
+static bool nova_table_ticket_release(void *ctx,void *frame,
+                                      uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=frame,.generation=generation,.role=NOVA_FRAME_PAGE_TABLE
+    };
+    return nova_page_free_ticket(&ticket);
+}
 static void *nova_stack_page_allocate(void *ctx){
     (void)ctx;return nova_page_alloc_role(NOVA_FRAME_STACK);
 }
@@ -738,6 +764,9 @@ static const struct nova_pt_ops nova_user_pt_ops={
     .release=nova_table_page_release,
     .physical_address=nova_process_page_phys,
     .table_physical_address=nova_table_page_phys,
+    .table_ticket_allocate=nova_table_ticket_allocate,
+    .table_ticket_physical_address=nova_table_ticket_physical,
+    .table_ticket_release=nova_table_ticket_release,
     .stack_allocate=nova_stack_page_allocate,
     .stack_release=nova_stack_page_release,
     .stack_physical_address=nova_stack_page_phys,
