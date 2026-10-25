@@ -371,6 +371,100 @@ static void test_distinct_stack_frames(void){
     assert(active==0);
 }
 
+/* Reproduce broken allocator ownership hand-offs during offline stack
+ * construction. A suspicious frame must never be wiped, registered or freed
+ * by rollback if it aliases a staged image, PT or accepted stack frame. */
+enum stack_fault_mode {
+    STACK_BORROW_IMAGE,
+    STACK_BORROW_TABLE,
+    STACK_BORROW_PREVIOUS,
+    TABLE_BORROW_PENDING_STACK,
+    STACK_PHYS_ALIAS_IMAGE,
+    STACK_PHYS_ALIAS_PREVIOUS,
+    STACK_PHYS_UNKNOWN
+};
+struct stack_fault_context {
+    enum stack_fault_mode mode;
+    unsigned calls;
+    unsigned inject_at;
+    void *image_frame;
+    void *first_table;
+    void *first_stack;
+    void *fresh_suspect;
+};
+static void *stack_fault_allocate(void *opaque){
+    struct stack_fault_context *ctx=(struct stack_fault_context*)opaque;
+    ctx->calls++;
+    if(ctx->calls==ctx->inject_at){
+        switch(ctx->mode){
+            case STACK_BORROW_IMAGE:return ctx->image_frame;
+            case STACK_BORROW_TABLE:return ctx->first_table;
+            case STACK_BORROW_PREVIOUS:return ctx->first_stack;
+            case TABLE_BORROW_PENDING_STACK:return ctx->first_stack;
+            case STACK_PHYS_ALIAS_IMAGE:
+            case STACK_PHYS_ALIAS_PREVIOUS:
+            case STACK_PHYS_UNKNOWN:
+                ctx->fresh_suspect=allocate(NULL);
+                return ctx->fresh_suspect;
+        }
+    }
+    void *p=allocate(NULL);
+    if(ctx->calls==1)ctx->first_table=p;
+    if(ctx->calls==5)ctx->first_stack=p;
+    return p;
+}
+static bool stack_fault_physical(void *opaque,const void *frame,uint64_t *out){
+    struct stack_fault_context *ctx=(struct stack_fault_context*)opaque;
+    if(frame && frame==ctx->fresh_suspect){
+        if(ctx->mode==STACK_PHYS_UNKNOWN)return false;
+        if(ctx->mode==STACK_PHYS_ALIAS_IMAGE)
+            return physical(NULL,ctx->image_frame,out);
+        if(ctx->mode==STACK_PHYS_ALIAS_PREVIOUS)
+            return physical(NULL,ctx->first_stack,out);
+    }
+    return physical(NULL,frame,out);
+}
+static void test_stack_allocator_ownership(void){
+    const enum stack_fault_mode modes[]={
+        STACK_BORROW_IMAGE,STACK_BORROW_TABLE,STACK_BORROW_PREVIOUS,
+        TABLE_BORROW_PENDING_STACK,STACK_PHYS_ALIAS_IMAGE,
+        STACK_PHYS_ALIAS_PREVIOUS,STACK_PHYS_UNKNOWN
+    };
+    for(size_t k=0;k<sizeof(modes)/sizeof(modes[0]);k++){
+        image_fixture();
+        struct nova_process_table processes={0};
+        uint32_t pid=stage(&processes);
+        struct nova_process_image *image=nova_process_find(&processes,pid);
+        assert(image && active==3);
+        uint8_t original[32];
+        memcpy(original,image->pages[0].frame,sizeof(original));
+        struct stack_fault_context fault={0};
+        fault.mode=modes[k];
+        fault.image_frame=image->pages[0].frame;
+        fault.inject_at=(fault.mode==STACK_BORROW_PREVIOUS ||
+                         fault.mode==STACK_PHYS_ALIAS_PREVIOUS)?9u:
+                        (fault.mode==TABLE_BORROW_PENDING_STACK?6u:5u);
+        struct nova_pt_ops injected={
+            .context=&fault,.allocate=stack_fault_allocate,
+            .release=release,.physical_address=stack_fault_physical
+        };
+        struct nova_user_space space={0};
+        assert(nova_user_space_prepare(&space,&injected,image)==NOVA_PT_BAD_FRAME);
+        assert(fault.calls==fault.inject_at);
+        assert(!space.prepared && !space.stack_count &&
+               !space.page_tables.tables_used);
+        assert(!memcmp(original,image->pages[0].frame,sizeof(original)));
+        /* A new frame with a fraudulent or missing physical identity is
+         * deliberately quarantined rather than released without proof.
+         * The test knows its true pool ownership and reclaims it explicitly. */
+        assert(active==(fault.fresh_suspect?4u:3u));
+        if(fault.fresh_suspect)release(NULL,fault.fresh_suspect);
+        assert(active==3);
+        assert(nova_process_drop(&processes,pid,release,NULL));
+        assert(active==0);
+    }
+}
+
 int main(void){
     test_page_tables();
     test_isolated_roots();
@@ -379,6 +473,7 @@ int main(void){
     test_guarded_user_stack();
     test_stack_failures();
     test_distinct_stack_frames();
+    test_stack_allocator_ownership();
     assert(active==0);
     puts("Offline paging: PML4, guarded user stacks, W^X/NX, rollback, separate roots; no CR3 use.");
     return 0;
