@@ -9,6 +9,7 @@
 #include "../kernel/vfs.h"
 #include "../kernel/elf64.h"
 #include "../kernel/process_image.h"
+#include "../kernel/capabilities.h"
 #define DISK_SECTORS 16384u
 #define ELF_FILE_BYTES 8320u
 #define DATA_SECTOR 67u
@@ -121,7 +122,60 @@ int main(void){
     uint8_t fetched[12];
     assert(nova_process_peek(process,0x402080,fetched,sizeof(fetched)));
     for(size_t i=0;i<sizeof(fetched);i++)assert(fetched[i]==0); /* zeroed BSS */
+    /* Staged programs start with NO rights: no file reads or writes. */
+    struct nova_cap_registry policy={0};
+    assert(nova_cap_register(&policy,&table,pid));
+    assert(!nova_cap_register(&policy,&table,pid));
+    assert(nova_cap_current(&policy,&table,pid)==0);
+    assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"DISK:/APP.ELF",0,fetched,8));
+    assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",0,fetched,8));
+    assert(!nova_cap_write_ram(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",
+                               (const uint8_t*)"UNSAFE",6));
+    assert(!nova_cap_check(&policy,&table,pid,NOVA_CAP_RAM_READ));
+    assert(!nova_cap_check(&policy,&table,pid,0));
+    assert(!nova_cap_check(&policy,&table,pid,NOVA_CAP_NETWORK));
+    assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_NETWORK));
+    assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_MICROPHONE));
+    assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_CONTROLLER));
+    assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_RAM_READ|NOVA_CAP_NETWORK));
+    assert(!nova_cap_grant_trusted(&policy,&table,pid,0));
+
+    /* A trusted future kernel broker can choose an explicit read grant.
+       Still no syscalls or usermode program execution exist. */
+    assert(nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_DISK_READ));
+    assert(nova_cap_current(&policy,&table,pid)==NOVA_CAP_DISK_READ);
+    assert(nova_cap_read_file(&policy,&table,pid,&vfs,"DISK:/APP.ELF",0,fetched,4));
+    assert(fetched[0]==0x7f&&fetched[1]=='E'&&fetched[2]=='L'&&fetched[3]=='F');
+    assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",0,fetched,4));
+    assert(!nova_cap_write_ram(&policy,&table,pid,&vfs,"DISK:/APP.ELF",
+                               (const uint8_t*)"X",1));
+    assert(!nova_cap_write_ram(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",
+                               (const uint8_t*)"X",1));
+    assert(nova_cap_grant_trusted(&policy,&table,pid,
+           NOVA_CAP_RAM_READ|NOVA_CAP_RAM_WRITE));
+    assert(nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",0,fetched,5));
+    assert(!nova_cap_write_ram(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",
+                               (const uint8_t*)"X",1)); /* protected RAM sample */
+    assert(nova_vfs_create(&vfs,"RAM:/GAME.TXT")); /* privileged setup */
+    assert(nova_cap_write_ram(&policy,&table,pid,&vfs,"RAM:/GAME.TXT",
+                               (const uint8_t*)"SAVE",4));
+    assert(nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/GAME.TXT",0,fetched,4));
+    assert(!memcmp(fetched,"SAVE",4));
+    assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/../NOTES.TXT",0,fetched,1));
+    assert(!nova_cap_write_ram(&policy,&table,pid,&vfs,"DISK:/APP.ELF",
+                               (const uint8_t*)"D",1));
+    assert(nova_cap_revoke_trusted(&policy,&table,pid,NOVA_CAP_RAM_WRITE));
+    assert(!nova_cap_write_ram(&policy,&table,pid,&vfs,"RAM:/GAME.TXT",
+                                (const uint8_t*)"NO",2));
+    assert(nova_cap_revoke_trusted(&policy,&table,pid,NOVA_CAP_DISK_READ));
+    assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"DISK:/APP.ELF",0,fetched,4));
+    assert(!nova_cap_revoke_trusted(&policy,&table,pid,NOVA_CAP_MICROPHONE));
+    assert(nova_vfs_remove(&vfs,"RAM:/GAME.TXT"));
+    assert(nova_cap_unregister(&policy,pid));
+    assert(!nova_cap_unregister(&policy,pid));
+    assert(!nova_cap_read_file(&policy,&table,pid,&vfs,"RAM:/NOTES.TXT",0,fetched,1));
     assert(nova_process_drop(&table,pid,stage_free,NULL));
+    assert(!nova_cap_grant_trusted(&policy,&table,pid,NOVA_CAP_RAM_READ));
     assert(staged_count==0 && nova_process_count(&table)==0);
     /* File metadata can be located, but disk modification remains forbidden. */
     uint8_t *second_ph=elf_byte(120);
@@ -136,6 +190,6 @@ int main(void){
     struct nova_vfs empty={.disk=NULL};
     struct elf_vfs_ctx no_disk={.vfs=&empty};
     assert(nova_elf64_probe(read_elf_vfs,&no_disk,file_bytes,&info)==NOVA_ELF_IO_ERROR);
-    puts("ELF64 + FAT16 + VFS + staged frames: read-only integration and cleanup tests passed.");
+    puts("ELF64 + FAT16 + VFS + staged frames + default-deny capability mediation: passed.");
     return 0;
 }
