@@ -23,6 +23,9 @@
 
 #define NOVA_PT_PAGE_SIZE 4096u
 #define NOVA_PT_MAX_TABLES 100u
+/* Staged ELF images use <=32 leaves, with 4 additional offline stack leaves.
+ * Bound manual mapping as well; never allow writable aliases of code pages. */
+#define NOVA_PT_MAX_MAPPED_PAGES 64u
 #define NOVA_PT_P UINT64_C(0x001)
 #define NOVA_PT_RW UINT64_C(0x002)
 #define NOVA_PT_US UINT64_C(0x004)
@@ -51,6 +54,13 @@ struct nova_page_table {
     uint64_t root_physical; /* candidate CR3 value; DO NOT ACTIVATE */
     uint16_t tables_used;
     uint16_t mapped_pages;
+    /* Reserve all staged-image frames before creating any table: even an
+     * untrustworthy allocator must never zero an ELF data/code frame. */
+    uint16_t protected_count;
+    void *protected_frames[NOVA_PROCESS_MAX_PAGES];
+    uint64_t protected_physical[NOVA_PROCESS_MAX_PAGES];
+    /* Reject aliases between leaf PTEs, including RX/RW dual mappings. */
+    uint64_t mapped_physical[NOVA_PT_MAX_MAPPED_PAGES];
     void *tables[NOVA_PT_MAX_TABLES];
     uint64_t table_physical[NOVA_PT_MAX_TABLES];
     bool prepared;
@@ -99,6 +109,20 @@ static inline enum nova_pt_result nova_pt_new_table(
             return NOVA_PT_BAD_FRAME;
         }
     }
+    for(uint16_t i=0;i<tree->protected_count;i++){
+        if(tree->protected_physical[i]==phys ||
+           tree->protected_frames[i]==page){
+            /* Ownership belongs to the staged image, not the page tables.
+             * Never zero or release this possibly aliased frame. */
+            return NOVA_PT_BAD_FRAME;
+        }
+    }
+    for(uint16_t i=0;i<tree->mapped_pages;i++){
+        if(tree->mapped_physical[i]==phys){
+            /* A new table may not overwrite an existing leaf frame. */
+            return NOVA_PT_BAD_FRAME;
+        }
+    }
     uint64_t *entries=(uint64_t *)page;
     for(size_t i=0;i<512;i++)entries[i]=0;
     uint16_t n=tree->tables_used++;
@@ -122,6 +146,13 @@ static inline enum nova_pt_result nova_pt_map_one(
     if(!tree||!tree->root_physical||!nova_pt_valid_user(va)||
        !nova_pt_valid_phys(physical) || (flags&~7u) ||
        ((flags&3u)==3u))return NOVA_PT_INVALID;
+    if(tree->mapped_pages>=NOVA_PT_MAX_MAPPED_PAGES)
+        return NOVA_PT_RESOURCE_LIMIT;
+    /* Same physical frame must not have a writable and executable alias. */
+    for(uint16_t i=0;i<tree->mapped_pages;i++)
+        if(tree->mapped_physical[i]==physical)return NOVA_PT_CONFLICT;
+    for(uint16_t i=0;i<tree->tables_used;i++)
+        if(tree->table_physical[i]==physical)return NOVA_PT_BAD_FRAME;
     const uint16_t indices[4]={
         (uint16_t)((va>>39)&511u),(uint16_t)((va>>30)&511u),
         (uint16_t)((va>>21)&511u),(uint16_t)((va>>12)&511u)
@@ -149,7 +180,7 @@ static inline enum nova_pt_result nova_pt_map_one(
     if(flags&2u)permissions|=NOVA_PT_RW;
     if(!(flags&1u))permissions|=NOVA_PT_NX;
     entries[indices[3]]=physical|permissions;
-    tree->mapped_pages++;
+    tree->mapped_physical[tree->mapped_pages++]=physical;
     return NOVA_PT_OK;
 }
 static inline enum nova_pt_result nova_pt_prepare(
@@ -160,17 +191,34 @@ static inline enum nova_pt_result nova_pt_prepare(
        image->page_count>NOVA_PROCESS_MAX_PAGES ||
        tree->tables_used||tree->prepared)return NOVA_PT_INVALID;
     *tree=(struct nova_page_table){0};
+    /* Preflight every leaf before ANY table allocation can overwrite it.
+     * Physical aliases are rejected even when pointers differ. This also
+     * protects against a buggy allocator handing us a staged-image frame.
+     * Do not release suspect frames: ownership cannot be established. */
+    for(uint16_t i=0;i<image->page_count;i++){
+        const struct nova_process_page *p=&image->pages[i];
+        uint64_t phys=0;
+        if(!p->frame || !ops->physical_address(ops->context,p->frame,&phys) ||
+           !nova_pt_valid_phys(phys))return NOVA_PT_BAD_FRAME;
+        for(uint16_t j=0;j<tree->protected_count;j++){
+            if(tree->protected_frames[j]==p->frame ||
+               tree->protected_physical[j]==phys){
+                *tree=(struct nova_page_table){0};
+                return NOVA_PT_BAD_FRAME;
+            }
+        }
+        tree->protected_frames[tree->protected_count]=p->frame;
+        tree->protected_physical[tree->protected_count++]=phys;
+    }
     uint64_t *root=NULL,root_phys=0;
     enum nova_pt_result status=nova_pt_new_table(tree,ops,&root,&root_phys);
     if(status!=NOVA_PT_OK){nova_pt_destroy(tree,ops);return status;}
     tree->root_physical=root_phys;
     for(uint16_t i=0;i<image->page_count;i++){
         const struct nova_process_page *p=&image->pages[i];
-        uint64_t phys=0;
-        if(!p->frame || !ops->physical_address(ops->context,p->frame,&phys) ||
-           !nova_pt_valid_phys(phys)){
-            nova_pt_destroy(tree,ops);return NOVA_PT_BAD_FRAME;
-        }
+        /* Use the already validated physical address, not a second
+         * potentially inconsistent allocator callback result. */
+        uint64_t phys=tree->protected_physical[i];
         status=nova_pt_map_one(tree,ops,p->virtual_page,phys,p->flags);
         if(status!=NOVA_PT_OK){nova_pt_destroy(tree,ops);return status;}
     }
