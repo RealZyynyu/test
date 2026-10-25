@@ -48,6 +48,8 @@ without generating an ISO.
 - Normalized keyboard game actions for the Arcade prototype; controller input
   is an unconnected future-driver interface, not hardware gamepad support.
 - Bounded physical page allocator (up to 8 MiB, 4 KiB pages, self-tested).
+  It now rejects overflowed Limine memory ranges and HHDM address mappings,
+  verifies allocation ownership, and wipes 4 KiB frames on release.
 - Cooperative in-kernel jobs, IDT and software interrupt diagnostics.
   Hardware PIT IRQ0 delivery was not verified across QEMU runs and has a
   fallback; there are **no protected processes or preemptive threads**.
@@ -330,6 +332,31 @@ when the image is dropped or NOVA reboots, and Ring-0 kernel code can
 still access them. Full game saves require actual user processes,
 identity-bound app directories, persistent storage and crash recovery.
 No disk write access has been enabled.
+
+## Hardened physical allocator (source-only)
+
+NOVA's `kernel/pmm.h` now validates the memory-region and higher-half
+direct-map bounds reported at boot before selecting its small physical RAM
+pool. It refuses to reinitialize an active page manager, verifies page
+ownership before accepting frees or physical-address translation, and
+**zeroes the entire 4 KiB frame on free** to reduce the chance of one
+future app seeing the previous app's leftover memory. Allocation also
+zeroes frames before handing them out.
+
+The new `tests/test_pmm.c` runs on **synthetic host memory**, with
+`tests/stubs/limine.h` (used for host tests only). It checks overflowing
+BIOS memory-map records, invalid HHDM offsets, too-small and misaligned
+regions, allocator exhaustion, double-free rejection, page ownership,
+zero-on-free, and reuse. GCC and Clang's AddressSanitizer/UndefinedBehaviorSanitizer
+test these operations on ordinary host memory. The kernel CI still compiles
+against the **real upstream Limine headers** and builds only a freestanding
+kernel ELF, **not an ISO**.
+
+Important: This does **not** prove a safe physical-memory manager on all
+computers. The allocator still manages only a tiny pool on a single core
+and provides no real CPU-enforced app isolation. A complete kernel needs
+additional allocator tests, memory protection, fault handling, and
+multiprocessor synchronization before release.
 
 ## Important missing features / final-release blockers
 
