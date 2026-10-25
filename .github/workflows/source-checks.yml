@@ -51,6 +51,17 @@ jobs:
             -fsanitize=undefined -fno-sanitize-recover=all \
             tests/test_elf64.c -o /tmp/nova-elf64-test-ubsan
           /tmp/nova-elf64-test-ubsan
+      - name: Inspect ELF64 across FAT16/VFS in synthetic disk image
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_elf_vfs.c -o /tmp/nova-elf-vfs
+          /tmp/nova-elf-vfs
+      - name: Clang UBSan ELF64 and VFS integration
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=undefined -fno-sanitize-recover=all \
+            tests/test_elf_vfs.c -o /tmp/nova-elf-vfs-ubsan
+          /tmp/nova-elf-vfs-ubsan
   fat16:
     name: Read-only FAT16 host tests
     runs-on: ubuntu-24.04
