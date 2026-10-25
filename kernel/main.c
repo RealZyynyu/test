@@ -12,6 +12,8 @@
 #include "scheduler.h"
 #include "pci.h"
 #include "interrupts.h"
+#include "rtc.h"
+#include "cpu.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -145,7 +147,7 @@ static int night=0;
 static char note[74]="HELLO FROM NOVA!";
 static unsigned int note_length=16;
 static const char *apps[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT","TERMINAL"};
-static int window_visible=1, file_open=-1;
+static int window_visible=1, file_open=-1, finder_page=0;
 static uint64_t usable_memory_mb=0;
 static uint64_t nova_heartbeats=0;
 static uint32_t nova_last_free_pages=0;
@@ -153,8 +155,8 @@ static bool nova_pmm_test_ok=false;
 
 static char shell_input[64]="";
 static unsigned shell_len=0;
-static char shell_output[3][100]={"NOVA SHELL 0.5","TYPE HELP FOR COMMANDS",""};
-static const char *ram_labels[]={"NOTES.TXT","README.TXT","TODO.TXT"};
+static char shell_output[3][100]={"NOVA SHELL 0.8","HELP FOR AVAILABLE COMMANDS",""};
+
 
 static void circle(int cx,int cy,int rx,int ry,uint32_t color) {
     if(rx<=0||ry<=0)return;
@@ -246,7 +248,10 @@ static void bar(void){
     roundrect(1072,10,27,13,3,night?0xE9EFF9:0x395873);
     rect(1100,14,3,5,night?0xE9EFF9:0x395873);
     rect(1075,13,21,7,night?0x435674:0xE9EFF9);
-    text(1120,14,"Sat  9:41 AM",1,night?0xFFFFFF:0x28374D);
+    char clock[20];
+    if(nova_clock_string(clock))
+        text(1120,14,clock+11,1,night?0xFFFFFF:0x28374D);
+    else text(1120,14,"CLOCK N/A",1,night?0xFFFFFF:0x28374D);
 }
 
 
@@ -350,29 +355,36 @@ static void app_content(void){
     uint32_t fg=ink(),secondary=sub();
     uint32_t pale=night?0x323E59:0xF3F6FB;
     if(screen==1){
-        text(397,197,"NOVA RAM FILES",2,fg);
-        text(397,231,"RAM DISK   /   HOME",1,secondary);
+        text(397,194,"NOVA FILES",2,fg);
+        text(397,229,"RAM DISK   /   HOME   -   VOLATILE STORAGE",1,secondary);
         rect(394,253,678,1,night?0x3D4661:0xE8ECF2);
         if(file_open<0){
-            for(int i=0;i<3;i++){
-                int x=410+i*214;
-                roundrect(x,281,185,183,15,pale);
-                folder(x+44,293,ram_labels[i]);
-                text(x+29,414,ram_labels[i],1,fg);
-                text(x+25,444,"RAM ONLY",1,secondary);
+            for(int index=0;index<8;index++){
+                int slot=nova_file_slot_by_ordinal((size_t)(finder_page*8+index));
+                if(slot<0)continue;
+                int x=400+(index%4)*165, y=266+(index/4)*119;
+                roundrect(x,y,153,114,13,pale);
+                folder(x+32,y-2,"");
+                text(x+9,y+88,nova_files[slot].name,1,fg);
+                text(x+9,y+101,"RAM FILE",1,secondary);
             }
-            rect(394,492,678,1,night?0x3D4661:0xE8ECF2);
-            text(399,514,"Click a file to read it. Notes can be edited.",1,secondary);
+            text(408,533,"PAGE",1,secondary);
+            number(449,532,(unsigned)(finder_page+1),1,fg);
+            roundrect(875,518,83,34,9,pale);
+            text(894,526,"PREV",1,fg);
+            roundrect(966,518,89,34,9,pale);
+            text(989,526,"NEXT",1,fg);
         }else{
-            text(412,276,"< BACK",2,night?0xD4E5FF:0x427BC6);
-            text(413,327,nova_files[file_open].name,2,fg);
-            roundrect(406,368,654,148,12,pale);
-            text(426,399,nova_files[file_open].data,1,fg);
-            if(file_open==0)text(426,461,"Open Notes to edit this file.",1,secondary);
-            text(406,552,"RAM DISK - CHANGES ARE LOST AT REBOOT",1,secondary);
+            text(408,271,"< BACK",2,night?0xD4E5FF:0x427BC6);
+            text(413,322,nova_files[file_open].name,2,fg);
+            roundrect(406,360,654,155,12,pale);
+            text(424,394,nova_files[file_open].data,1,fg);
+            text(408,541,"FILES ONLY EXIST IN RAM. REBOOT ERASES CHANGES.",1,secondary);
         }
         roundrect(396,571,672,36,9,pale);
-        text(410,583,"FILES: 3       RAM-ONLY VFS      NO DISK DRIVER",1,secondary);
+        text(410,581,"FILES:",1,secondary);
+        number(463,579,(unsigned)nova_file_count(),1,fg);
+        text(499,581,"/ 12     IN-MEMORY VFS   -   NO DISK WRITES",1,secondary);
     }else if(screen==0){
         text(402,197,"Welcome back.",3,fg);
         text(405,240,"Your personal workspace. Built from scratch.",1,secondary);
@@ -457,7 +469,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"HELP  LS  CAT  MEM  PMM  PCI  TASKS  TICKS",1,secondary);
+        text(406,608,"HELP  LS  CAT  TOUCH  RM  WRITE  DATE  CPU",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -588,11 +600,20 @@ static void nova_show_metric(const char *prefix,uint64_t value,const char *suffi
     shell_result(line);
 }
 static void shell_execute(void){
-    if(nova_file_equal(shell_input,"HELP"))shell_result("HELP LS CAT UNAME MEM PMM PCI TASKS TICKS CLEAR");
-    else if(nova_file_equal(shell_input,"LS"))shell_result("NOTES.TXT   README.TXT   TODO.TXT");
-    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.7 X86_64");
+    if(nova_file_equal(shell_input,"HELP"))
+        shell_result("LS CAT TOUCH RM WRITE DATE CPU MEM PMM PCI TASKS TICKS");
+    else if(nova_file_equal(shell_input,"LS")){
+        char list[100]="";
+        for(size_t i=0;i<NOVA_FILE_COUNT;i++){
+            if(!nova_files[i].used)continue;
+            if(list[0])nova_append_text(list,sizeof(list)," ");
+            nova_append_text(list,sizeof(list),nova_files[i].name);
+        }
+        shell_result(list);
+    }
+    else if(nova_file_equal(shell_input,"UNAME"))shell_result("NOVA-OS NATIVE 0.8 X86_64");
     else if(nova_file_equal(shell_input,"TICKS"))
-        nova_show_metric("HARDWARE TIMER IRQS ",nova_timer_ticks>0?nova_timer_ticks-1:0,NULL,0);
+        nova_show_metric("TIMER IRQ HANDLER CALLS ",nova_timer_ticks,NULL,0);
     else if(nova_file_equal(shell_input,"MEM"))
         nova_show_metric("USABLE RAM (MiB) ",usable_memory_mb,NULL,0);
     else if(nova_file_equal(shell_input,"PMM"))
@@ -601,13 +622,47 @@ static void shell_execute(void){
         nova_show_metric("JOBS=",nova_job_count," RUNS=",nova_job_total_runs());
     else if(nova_file_equal(shell_input,"PCI"))
         nova_show_metric("PCI DEVICES=",nova_pci.devices," NET=",nova_pci.network);
+    else if(nova_file_equal(shell_input,"DATE")){
+        char date[20];
+        shell_result(nova_clock_string(date)?date:"RTC CLOCK UNAVAILABLE");
+    }
+    else if(nova_file_equal(shell_input,"CPU")){
+        char v[100]="CPU: ";
+        nova_append_text(v,sizeof(v),nova_cpu.vendor);
+        nova_append_text(v,sizeof(v),nova_cpu.hypervisor?" (VM)":" (NATIVE)");
+        shell_result(v);
+    }
+    else if(nova_file_equal(shell_input,"STAT"))
+        nova_show_metric("RAM FILES ",nova_file_count()," / SLOTS ",NOVA_FILE_COUNT);
     else if(nova_file_equal(shell_input,"CLEAR")){
         for(int i=0;i<3;i++)shell_output[i][0]=0;
-    } else if(shell_input[0]=='C' && shell_input[1]=='A' &&
-              shell_input[2]=='T' && shell_input[3]==' '){
+    }else if(shell_input[0]=='C'&&shell_input[1]=='A'&&
+             shell_input[2]=='T'&&shell_input[3]==' '){
         struct nova_file *f=nova_file_find(shell_input+4);
         shell_result(f?f->data:"FILE NOT FOUND");
-    } else shell_result("UNKNOWN COMMAND - TYPE HELP");
+    }else if(shell_input[0]=='T'&&shell_input[1]=='O'&&
+             shell_input[2]=='U'&&shell_input[3]=='C'&&
+             shell_input[4]=='H'&&shell_input[5]==' '){
+        shell_result(nova_file_create(shell_input+6)?"FILE CREATED":"INVALID, FULL OR EXISTS");
+    }else if(shell_input[0]=='R'&&shell_input[1]=='M'&&
+             shell_input[2]==' '){
+        bool deleted=nova_file_delete(shell_input+3);
+        if(deleted){file_open=-1;finder_page=0;}
+        shell_result(deleted?"FILE DELETED":"NOT FOUND OR PROTECTED");
+    }else if(shell_input[0]=='W'&&shell_input[1]=='R'&&
+             shell_input[2]=='I'&&shell_input[3]=='T'&&
+             shell_input[4]=='E'&&shell_input[5]==' '){
+        char *name=shell_input+6;
+        char *body=name;
+        while(*body&&*body!=' ')body++;
+        if(!*body)shell_result("USE WRITE FILENAME TEXT");
+        else{
+            *body++=0;
+            size_t len=0;while(body[len])len++;
+            bool written=nova_file_write(name,body,len);
+            shell_result(written?"FILE UPDATED IN RAM":"FILE NOT FOUND / TOO LONG");
+        }
+    }else shell_result("UNKNOWN COMMAND - TYPE HELP");
     shell_len=0;shell_input[0]=0;
 }
 static void open_app(int app){
@@ -648,12 +703,21 @@ static void mouse_click(int x,int y){
     }
     if(screen==1){
         if(file_open>=0){
-            if(x>=390&&x<540&&y>=270&&y<325)file_open=-1;
+            if(x>=390&&x<545&&y>=265&&y<322)file_open=-1;
             return;
         }
-        if(y>=273&&y<=468){
-            for(int i=0;i<3;i++)if(x>=410+i*214&&x<=595+i*214){
-                file_open=i;return;
+        if(y>=518&&y<=560){
+            if(x>=875&&x<966){if(finder_page>0)finder_page--;return;}
+            if(x>=966&&x<=1060){
+                if((size_t)((finder_page+1)*8)<nova_file_count())finder_page++;
+                return;
+            }
+        }
+        for(int i=0;i<8;i++){
+            int tx=400+(i%4)*165,ty=266+(i/4)*119;
+            if(x>=tx&&x<tx+153&&y>=ty&&y<ty+114){
+                file_open=nova_file_slot_by_ordinal((size_t)(finder_page*8+i));
+                return;
             }
         }
     }
@@ -769,6 +833,11 @@ void kmain(void){
         nova_pmm_test_ok=nova_pmm_self_test();
         serial_log(nova_pmm_test_ok?"NOVA_PMM_SELFTEST_OK\n":"NOVA_PMM_SELFTEST_FAILED\n");
     }
+    if(nova_cpu_detect())serial_log("NOVA_CPU_READY\n");
+    else serial_log("NOVA_CPU_UNAVAILABLE\n");
+    char boot_clock[20];
+    if(nova_clock_string(boot_clock))serial_log("NOVA_RTC_READY\n");
+    else serial_log("NOVA_RTC_UNAVAILABLE\n");
     nova_pci_scan();
     serial_log("NOVA_PCI_INVENTORY_READY\n");
     bool jobs_ready=nova_job_add("HEARTBEAT",nova_job_heartbeat);
@@ -782,6 +851,7 @@ void kmain(void){
     else serial_log("NOVA_PS2_MOUSE_UNAVAILABLE\n");
     struct nova_file *initial=nova_file_find("NOTES.TXT");
     if(initial)serial_log("NOVA_RAMFS_READY\n");
+    serial_log(nova_ramfs_self_test()?"NOVA_RAMFS_SELFTEST_OK\n":"NOVA_RAMFS_SELFTEST_FAILED\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
         // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
