@@ -288,7 +288,8 @@ static inline bool nova_process_drop_guarded(
 static inline bool nova_process_owner_tombstone_valid(
     const struct nova_process_image *image){
     if(!image||!image->staged||!image->guarded||
-       !image->owner_retirement_pending||!image->owner||!image->pid||
+       image->rollback_pending||!image->owner_retirement_pending||
+       !image->owner||!image->pid||
        image->page_count||image->entry||image->segments||image->label[0])
         return false;
     for(uint32_t i=0;i<NOVA_PROCESS_MAX_PAGES;i++){
