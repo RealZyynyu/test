@@ -234,7 +234,7 @@ struct nova_frame_ticket {
     uint64_t generation;
     enum nova_frame_role role;
 };
-static bool nova_pmm_ticket_valid(const struct nova_frame_ticket *ticket){
+static inline bool nova_pmm_ticket_valid(const struct nova_frame_ticket *ticket){
     if(!ticket || !ticket->frame || !ticket->generation ||
        !nova_pmm_role_valid(ticket->role) ||
        !nova_pmm_metadata_valid())return false;
@@ -249,7 +249,7 @@ static bool nova_pmm_ticket_valid(const struct nova_frame_ticket *ticket){
            nova_pmm.roles[i]==(uint8_t)ticket->role &&
            nova_pmm.generations[i]==ticket->generation;
 }
-static bool nova_page_alloc_ticket(enum nova_frame_role role,
+static inline bool nova_page_alloc_ticket(enum nova_frame_role role,
                                    struct nova_frame_ticket *out){
     if(!out)return false;
     *out=(struct nova_frame_ticket){0};
@@ -262,11 +262,11 @@ static bool nova_page_alloc_ticket(enum nova_frame_role role,
     };
     return true;
 }
-static bool nova_page_free_ticket(const struct nova_frame_ticket *ticket){
+static inline bool nova_page_free_ticket(const struct nova_frame_ticket *ticket){
     return nova_pmm_ticket_valid(ticket) &&
            nova_page_free_role(ticket->frame,ticket->role);
 }
-static bool nova_pmm_physical_ticket(const struct nova_frame_ticket *ticket,
+static inline bool nova_pmm_physical_ticket(const struct nova_frame_ticket *ticket,
                                      uint64_t *physical){
     return physical && nova_pmm_ticket_valid(ticket) &&
            nova_pmm_physical_role(ticket->frame,ticket->role,physical);
