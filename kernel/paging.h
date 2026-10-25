@@ -36,12 +36,24 @@ typedef void *(*nova_pt_alloc_fn)(void *);
 typedef void (*nova_pt_free_fn)(void *,void *);
 typedef bool (*nova_pt_phys_fn)(void *,const void *,uint64_t *);
 
+/* physical_address validates staged IMAGE frames during preflight.
+ * Optional role-specific callbacks let the native PMM enforce independent
+ * PAGE_TABLE and STACK ownership. Host tests may omit them and use the
+ * original common callbacks; partial stack overrides are rejected. */
 struct nova_pt_ops {
     void *context;
     nova_pt_alloc_fn allocate;
     nova_pt_free_fn release;
     nova_pt_phys_fn physical_address;
+    nova_pt_phys_fn table_physical_address;
+    nova_pt_alloc_fn stack_allocate;
+    nova_pt_free_fn stack_release;
+    nova_pt_phys_fn stack_physical_address;
 };
+static inline nova_pt_phys_fn nova_pt_table_physical(const struct nova_pt_ops *ops){
+    return ops->table_physical_address?
+           ops->table_physical_address:ops->physical_address;
+}
 enum nova_pt_result {
     NOVA_PT_OK,
     NOVA_PT_INVALID,
@@ -113,7 +125,7 @@ static inline enum nova_pt_result nova_pt_new_table(
         if(tree->protected_frames[i]==page)return NOVA_PT_BAD_FRAME;
     if(tree->pending_leaf_frame==page)return NOVA_PT_BAD_FRAME;
     uint64_t phys=0;
-    if(!ops->physical_address(ops->context,page,&phys)||
+    if(!nova_pt_table_physical(ops)(ops->context,page,&phys)||
        !nova_pt_valid_phys(phys)||((uintptr_t)page&7u)!=0){
         /* Cannot establish ownership of a suspect allocation. Releasing it
          * could double-free an image/stack frame through a faulty callback.
@@ -158,7 +170,7 @@ static inline bool nova_pt_tables_releasable(
         uint64_t phys=0;
         if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
            !nova_pt_valid_phys(tree->table_physical[i])||
-           !ops->physical_address(ops->context,frame,&phys)||
+           !nova_pt_table_physical(ops)(ops->context,frame,&phys)||
            phys!=tree->table_physical[i])return false;
         for(uint16_t j=0;j<i;j++)
             if(frame==tree->tables[j]||
