@@ -18,6 +18,7 @@
 #include "fat16.h"
 #include "vfs.h"
 #include "elf64.h"
+#include "process_image.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -158,6 +159,7 @@ static uint32_t nova_last_free_pages=0;
 static bool nova_pmm_test_ok=false;
 static struct nova_fat16 nova_disk_fat16;
 static struct nova_vfs nova_vfs_state={.disk=&nova_disk_fat16};
+static struct nova_process_table nova_processes;
 
 static char shell_input[64]="";
 static unsigned shell_len=0;
@@ -475,7 +477,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"HELP  VLS  VCAT  ELFCHK  ELFPAGES  PMM  PCI",1,secondary);
+        text(406,608,"ELFCHK  PSTAGE  PLIST  PINFO  PDROP  (NO EXECUTION)",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -627,9 +629,28 @@ static enum nova_elf_result nova_elf_check_path(const char *path,
     return nova_elf64_probe(nova_elf_from_vfs,&reader,size,info);
 }
 
+/* These staged images are kernel-only data; no ring-3 program execution. */
+static void *nova_process_page_allocate(void *ctx){
+    (void)ctx;return nova_page_alloc();
+}
+static void nova_process_page_release(void *ctx,void *page){
+    (void)ctx;(void)nova_page_free(page);
+}
+static uint32_t nova_pid_parse(const char *str){
+    if(!str||!*str)return 0;
+    uint32_t result=0;
+    for(;*str;str++){
+        if(*str<'0'||*str>'9')return 0;
+        uint32_t d=(uint32_t)(*str-'0');
+        if(result>(UINT32_MAX-d)/10u)return 0;
+        result=result*10u+d;
+    }
+    return result;
+}
+
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("VLS VCAT VSTAT VWRITE VRM ELFCHK ELFPAGES HELP");
+        shell_result("HELP PSTAGE PLIST PINFO PDROP ELFCHK ELFPAGES VLS");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -793,6 +814,43 @@ static void shell_execute(void){
         if(result==NOVA_ELF_OK)
             nova_show_metric("APP PAGES=",info.pages," SEGMENTS=",info.load_count);
         else shell_result(nova_elf_result_name(result));
+    }
+    else if(nova_file_equal(shell_input,"PLIST"))
+        nova_show_metric("STAGED IMAGES=",nova_process_count(&nova_processes),
+                          " / SLOTS=",NOVA_PROCESS_SLOTS);
+    else if(shell_input[0]=='P'&&shell_input[1]=='S'&&
+            shell_input[2]=='T'&&shell_input[3]=='A'&&
+            shell_input[4]=='G'&&shell_input[5]=='E'&&shell_input[6]==' '){
+        const char *path=shell_input+7;
+        uint32_t file_size=0;bool read_only=false;
+        if(!nova_vfs_size(&nova_vfs_state,path,&file_size,&read_only))
+            shell_result("PROGRAM FILE NOT FOUND");
+        else{
+            struct nova_elf_path source={.vfs=&nova_vfs_state,.path=path};
+            uint32_t pid=0;
+            enum nova_process_result status=nova_process_stage(
+                &nova_processes,path,nova_elf_from_vfs,&source,file_size,
+                nova_process_page_allocate,nova_process_page_release,NULL,&pid);
+            if(status==NOVA_PROCESS_OK)
+                nova_show_metric("IMAGE STAGED PID=",pid,NULL,0);
+            else shell_result(nova_process_result_name(status));
+        }
+    }
+    else if(shell_input[0]=='P'&&shell_input[1]=='I'&&
+            shell_input[2]=='N'&&shell_input[3]=='F'&&
+            shell_input[4]=='O'&&shell_input[5]==' '){
+        struct nova_process_image *p=nova_process_find(
+            &nova_processes,nova_pid_parse(shell_input+6));
+        if(p)nova_show_metric("PAGES=",p->page_count,
+                              " SEGMENTS=",p->segments);
+        else shell_result("STAGED IMAGE NOT FOUND");
+    }
+    else if(shell_input[0]=='P'&&shell_input[1]=='D'&&
+            shell_input[2]=='R'&&shell_input[3]=='O'&&
+            shell_input[4]=='P'&&shell_input[5]==' '){
+        bool dropped=nova_process_drop(&nova_processes,
+            nova_pid_parse(shell_input+6),nova_process_page_release,NULL);
+        shell_result(dropped?"IMAGE FRAMES RELEASED":"STAGED IMAGE NOT FOUND");
     }
     else if(nova_file_equal(shell_input,"CLEAR")){
         for(int i=0;i<3;i++)shell_output[i][0]=0;
@@ -1020,6 +1078,7 @@ void kmain(void){
     if(initial)serial_log("NOVA_RAMFS_READY\n");
     serial_log(nova_ramfs_self_test()?"NOVA_RAMFS_SELFTEST_OK\n":"NOVA_RAMFS_SELFTEST_FAILED\n");
     serial_log("NOVA_VFS_READY\n");
+    serial_log("NOVA_PROCESS_IMAGE_TABLE_READY\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
         // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
