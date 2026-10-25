@@ -117,11 +117,10 @@ static void test_guarded_staging_and_drop(void){
     assert(!nova_process_frames_releasable(image,&table,image_phys_legacy,NULL));
     /* Pointer-only drop must not accidentally erase guarded pages. */
     assert(!nova_process_drop(&table,pid,image_free_legacy,image_phys_legacy,NULL));
+    assert(!nova_process_release_image(image,&table,
+                                      image_free_legacy,image_phys_legacy,NULL));
     assert(nova_pmm.in_use==2);
-    assert(nova_process_find(&table,pid)==NULL); /* descriptor dropped */
-    /* Test the normal guarded cleanup with a fresh staged image. */
-    setup();table=(struct nova_process_table){0};
-    assert(stage(&table,&guard,&pid)==NOVA_PROCESS_OK);
+    assert(nova_process_find(&table,pid)==image); /* tickets preserved */
     assert(nova_process_drop_guarded(&table,pid,image_phys_legacy,&guard,NULL));
     assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
     assert(nova_process_find(&table,pid)==NULL);
