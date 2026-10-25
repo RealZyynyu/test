@@ -23,6 +23,8 @@
 #include "user_space.h"
 #include "game_input.h"
 #include "capabilities.h"
+#include "broker.h"
+#include "user_buffer.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -167,6 +169,9 @@ static struct nova_fat16 nova_disk_fat16;
 static struct nova_vfs nova_vfs_state={.disk=&nova_disk_fat16};
 static struct nova_process_table nova_processes;
 static struct nova_cap_registry nova_app_policy;
+static const struct nova_broker_context nova_kernel_broker={
+    .rights=&nova_app_policy,.processes=&nova_processes,.vfs=&nova_vfs_state
+};
 /* OFFLINE: never activated via CR3. Missing all kernel mappings. */
 static struct nova_user_space nova_user_spaces[NOVA_PROCESS_SLOTS];
 
@@ -487,7 +492,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"PSTAGE  PACCESS  PDROP  -  NO APP EXECUTION",1,secondary);
+        text(406,608,"PSTAGE  PBROKER  PBUF  PDROP  (OFFLINE)",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -672,7 +677,7 @@ static uint32_t nova_pid_parse(const char *str){
 
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("PSTAGE PLIST PINFO PSTACK PACCESS PDROP ELFCHK");
+        shell_result("PSTAGE PBROKER PBUF PACCESS PDROP ELFCHK HELP");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -925,6 +930,34 @@ static void shell_execute(void){
         else nova_show_metric("GRANTED RIGHTS (BITMASK)=",
              nova_cap_current(&nova_app_policy,&nova_processes,pid),NULL,0);
     }
+    else if(shell_input[0]=='P'&&shell_input[1]=='B'&&
+            shell_input[2]=='R'&&shell_input[3]=='O'&&
+            shell_input[4]=='K'&&shell_input[5]=='E'&&
+            shell_input[6]=='R'&&shell_input[7]==' '){
+        uint32_t pid=nova_pid_parse(shell_input+8);
+        struct nova_broker_request request={0};
+        struct nova_broker_response response;
+        request.operation=NOVA_BROKER_VERSION;
+        if(nova_broker_dispatch(&nova_kernel_broker,pid,&request,
+                                &response)==NOVA_BROKER_OK)
+            nova_show_metric("OFFLINE BROKER ABI=",response.version,NULL,0);
+        else shell_result("NO STAGED APP BROKER IDENTITY");
+    }
+    else if(shell_input[0]=='P'&&shell_input[1]=='B'&&
+            shell_input[2]=='U'&&shell_input[3]=='F'&&shell_input[4]==' '){
+        uint32_t pid=nova_pid_parse(shell_input+5);
+        struct nova_process_image *p=nova_process_find(&nova_processes,pid);
+        if(!p)shell_result("STAGED IMAGE NOT FOUND");
+        else{
+            struct nova_user_space *space=&nova_user_spaces[nova_process_index(p)];
+            bool writable=nova_user_span_accessible(space,
+                                   space->initial_rsp,16u,true);
+            bool guard=nova_user_span_accessible(space,
+                                   space->guard_base,16u,true);
+            shell_result(writable&&!guard?
+                "OFFLINE STACK VALID; GUARD BLOCKED":"OFFLINE BUFFER MAP INVALID");
+        }
+    }
     else if(shell_input[0]=='P'&&shell_input[1]=='D'&&
             shell_input[2]=='R'&&shell_input[3]=='O'&&
             shell_input[4]=='P'&&shell_input[5]==' '){
@@ -1175,6 +1208,7 @@ void kmain(void){
     serial_log("NOVA_OFFLINE_PAGING_PREPARER_READY\n");
     serial_log("NOVA_OFFLINE_GUARDED_STACK_READY\n");
     serial_log("NOVA_APP_CAPABILITIES_DEFAULT_DENY\n");
+    serial_log("NOVA_OFFLINE_BROKER_ABI_V1_READY\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
         // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
