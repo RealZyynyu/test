@@ -1,12 +1,17 @@
-name: Build NOVA Native ISO
+name: NOVA Final ISO (manual only)
 on:
-  push:
-    branches: [nova-os-native]
   workflow_dispatch:
+    inputs:
+      final_release:
+        description: 'Final version approved; build and publish NOVA ISO'
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: write
 jobs:
   build:
+    if: ${{ inputs.final_release == true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -110,7 +115,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="nova-native-v0.9"
+          tag="nova-native-final-${GITHUB_SHA:0:8}"
           files=(nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256)
           if [[ -s nova-os-native-preview.png ]]; then
             files+=(nova-os-native-preview.png)
@@ -123,7 +128,7 @@ jobs:
           else
             gh release create "$tag" "${files[@]}" \
               --target "$GITHUB_SHA" \
-              --title "NOVA OS Native 0.9 (Read-only Disk Detection)" \
-              --notes "Independent NOVA kernel with safe read-only legacy IDE ATA probing and sector reads, CPU/RTC and RAM files; QEMU tests use an 8 MiB disposable virtual disk. NOT a Windows replacement. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
+              --title "NOVA OS Native (Final ISO)" \
+              --notes "Independent NOVA kernel with safe read-only legacy IDE ATA probing and sector reads, CPU/RTC and RAM files; QEMU tests use an 8 MiB disposable virtual disk. Release must be verified before installing on real hardware. Test in VirtualBox only; do not install on a real machine." \
               --prerelease
           fi
