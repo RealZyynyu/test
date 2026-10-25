@@ -33,6 +33,8 @@ jobs:
           cp kernel/pci.h _builder/kernel/src/pci.h
           cp kernel/interrupts.h _builder/kernel/src/interrupts.h
           cp kernel/irq.S _builder/kernel/src/irq.S
+          cp kernel/rtc.h _builder/kernel/src/rtc.h
+          cp kernel/cpu.h _builder/kernel/src/cpu.h
           cp limine.conf _builder/limine.conf
       - name: Build independent x86-64 kernel and ISO
         run: |
@@ -94,13 +96,16 @@ jobs:
           grep -q NOVA_IRQ_SW_TEST_OK nova-os-serial.log
           grep -q NOVA_IF_ENABLED nova-os-serial.log
           grep -q NOVA_PIC_MASK_OK nova-os-serial.log
+          grep -q NOVA_CPU_READY nova-os-serial.log
+          grep -q NOVA_RTC_READY nova-os-serial.log
+          grep -q NOVA_RAMFS_SELFTEST_OK nova-os-serial.log
           cat nova-os-serial.log
       - name: Publish ISO as a private GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="nova-native-v0.7"
+          tag="nova-native-v0.8"
           files=(nova-os-native-x86_64.iso nova-os-native-x86_64.iso.sha256)
           if [[ -s nova-os-native-preview.png ]]; then
             files+=(nova-os-native-preview.png)
@@ -113,7 +118,7 @@ jobs:
           else
             gh release create "$tag" "${files[@]}" \
               --target "$GITHUB_SHA" \
-              --title "NOVA OS Native 0.7 (Interrupt Foundation)" \
-              --notes "Independent NOVA x86-64 kernel with basic IDT and a verified software-IRQ test, experimental PIT, fallback cooperative jobs, memory, mouse, PCI and RAM files; checked by QEMU boot tests. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
+              --title "NOVA OS Native 0.8 (Hardware Clock and RAM Files)" \
+              --notes "Independent NOVA kernel with x86 CPUID, CMOS RTC, dynamic RAM files, terminal write/remove commands, IDT diagnostics and QEMU boot selftests. NOT a Windows replacement. NOT a Windows replacement. Test in VirtualBox only; do not install on a real machine." \
               --prerelease
           fi
