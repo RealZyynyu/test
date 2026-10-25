@@ -100,3 +100,20 @@ ist nicht absicherbar. Die Bereinigung ist single-core und nicht SMP-atomar.
 Sie verwaltet Offline-Metadaten, bietet aber keine laufende Prozessisolation.
 Keine ISO, kein Release, keine Installation; `final_release` bleibt manuell
 gesperrt.
+
+## Trennung aktiver Images und Cleanup-Tombstones
+
+Ein Eintrag mit `owner_retirement_pending` hält nur noch die PMM-Eigentümer-ID
+für einen späteren Freigabeversuch fest; seine Image-Frames sind bereits
+freigegeben. Er darf daher nicht als lebendes, vorbereitetes Programm
+erscheinen. `nova_process_find()` liefert ausschließlich aktive staged Images,
+und `nova_process_count()` zählt weder Eigentümer-Tombstones noch ausstehende
+PSTAGE-Rollbacks. `nova_process_find_any()` ist für die interne
+Lebenszyklusverwaltung vorgesehen, damit `PDROP` den Tombstone weiter
+erreichen und nach erfolgreicher Eigentümerstilllegung entfernen kann.
+
+Der Host-Regressionstest prüft, dass ein Tombstone nicht mehr über die normale
+Prozesssuche gefunden oder in der Anzahl aktiver Images gezählt wird, während
+der gezielte Cleanup-Pfad ihn weiterhin sicher abschließen kann. Das ändert
+keine Ausführungs- oder Isolationsgarantie: NOVA führt diese Images weiterhin
+nicht in Ring 3 aus.
