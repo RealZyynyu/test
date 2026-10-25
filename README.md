@@ -57,12 +57,52 @@ disk filesystem.
 - `kernel/ata.h` — legacy IDE LBA28 sector **reads only**
 - `kernel/fat16.h` — independent bounded FAT16 parser and file reader
 - `kernel/ramfs.h` — RAM-only files
+- `kernel/vfs.h` — explicit RAM:/ and read-only DISK:/ storage namespace
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
 - `kernel/ps2_mouse.h`, `kernel/rtc.h`, `kernel/cpu.h`, `kernel/pci.h`
 - `tests/test_fat16.c` — synthetic MBR/superfloppy, FAT file, boundary and
   malformed-data tests, compiled with GCC and Clang/UBSan
+
+## Unified VFS in development
+
+The native kernel now has a small explicit virtual filesystem API
+(`kernel/vfs.h`) connecting two very different storage volumes:
+
+- `RAM:/` is writable, volatile, limited to 12 named files of at most 127
+  content bytes each. Files vanish at reboot.
+- `DISK:/` is a read-only FAT16 root-directory view when the virtual IDE
+  disk contains a supported FAT16 volume. **No disk writes exist** in this API.
+
+Development-only terminal commands (not yet distributed in any ISO):
+
+```text
+VLS RAM:/
+VLS DISK:/
+VCAT RAM:/NOTES.TXT
+VCAT DISK:/README.TXT
+VSTAT DISK:/README.TXT
+VTOUCH RAM:/DEMO.TXT
+VWRITE RAM:/DEMO.TXT HELLO
+VCAT RAM:/DEMO.TXT
+VRM RAM:/DEMO.TXT
+```
+
+All VFS paths require an explicit volume, do not allow parent-directory
+traversal, and reject invalid or excessively long names. `VWRITE` and
+`VRM` refuse disk paths. FAT16 rejects reserved, bad, and end-of-chain
+cluster values where actual file content requires another cluster.
+
+Automated source tests verify disk write protection, RAM-file operations,
+boundary checks and the FAT16 parser on synthetic MBR/superfloppy images.
+GitHub's independent native-kernel job also compiles and links the full
+freestanding kernel **without ISO generation**.
+
+This is not a full production VFS: there are no directories, file
+descriptors, permissions, symbolic links, writeable disk filesystem,
+transaction recovery or concurrent multi-process operations. FAT16 integration
+inside a running QEMU guest remains to be tested before a final release.
 
 ## Important missing features / final-release blockers
 
