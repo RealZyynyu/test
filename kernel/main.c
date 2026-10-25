@@ -857,6 +857,36 @@ static uint32_t nova_pid_parse(const char *str){
     return result;
 }
 
+static bool nova_retire_owner_callback(void *ctx,uint64_t owner){
+    (void)ctx;
+    return nova_owner_retire(owner);
+}
+/* One guarded teardown path for PDROP and setup rollback. Never retire an
+ * owner while stack/table frames remain, and retain a retryable tombstone if
+ * retirement fails after the last image frame was released. */
+static bool nova_drop_staged_process(uint32_t pid){
+    struct nova_process_image *image=nova_process_find(&nova_processes,pid);
+    if(!image)return false;
+    struct nova_user_space *space=&nova_user_spaces[nova_process_index(image)];
+    if(image->owner_retirement_pending){
+        if(!nova_user_space_is_empty(space))return false;
+        return nova_process_drop_owned_guarded(&nova_processes,pid,
+            nova_process_page_phys,&nova_image_guard_ops,
+            nova_retire_owner_callback,NULL);
+    }
+    if(!space->teardown_started &&
+       !nova_offline_drop_preflight(image,&nova_processes,space,
+            &nova_user_pt_ops,nova_process_page_phys,
+            &nova_image_guard_ops,NULL))return false;
+    (void)nova_save_unregister(&nova_private_saves,pid);
+    (void)nova_cap_unregister(&nova_app_policy,pid);
+    if(!nova_user_space_is_empty(space) &&
+       !nova_user_space_destroy(space,&nova_user_pt_ops))return false;
+    return nova_process_drop_owned_guarded(&nova_processes,pid,
+        nova_process_page_phys,&nova_image_guard_ops,
+        nova_retire_owner_callback,NULL);
+}
+
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
         shell_result("PSTAGE PBROKER PBUF PACCESS PDROP ELFCHK HELP");
@@ -1057,27 +1087,20 @@ static void shell_execute(void){
                             nova_show_metric("IMAGE STAGED, NO RIGHTS PID=",pid,NULL,0);
                         else{
                             /* Never leave a half-registered image behind. */
-                            (void)nova_cap_unregister(&nova_app_policy,pid);
-                            nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                            (void)nova_process_drop_guarded(&nova_processes,pid,
-                nova_process_page_phys,&nova_image_guard_ops,NULL);
-                            (void)nova_owner_retire(owner);
-                            shell_result("PRIVATE SAVE SLOT UNAVAILABLE");
+                            if(!nova_drop_staged_process(pid))
+                                shell_result("ROLLBACK INCOMPLETE; RETRY PDROP");
+                            else shell_result("PRIVATE SAVE SLOT UNAVAILABLE");
                         }
                     }else{
-                        nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                        (void)nova_process_drop_guarded(&nova_processes,pid,
-                nova_process_page_phys,&nova_image_guard_ops,NULL);
-                        (void)nova_owner_retire(owner);
-                        shell_result("CAPABILITY REGISTRY FULL");
+                        if(!nova_drop_staged_process(pid))
+                            shell_result("ROLLBACK INCOMPLETE; RETRY PDROP");
+                        else shell_result("CAPABILITY REGISTRY FULL");
                     }
                 }else{
                     /* Both stack and table frames roll back on any failure. */
-                    nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
-                    (void)nova_process_drop_guarded(&nova_processes,pid,
-                nova_process_page_phys,&nova_image_guard_ops,NULL);
-                    (void)nova_owner_retire(owner);
-                    shell_result(nova_pt_status_name(mapped));
+                    if(!nova_drop_staged_process(pid))
+                        shell_result("ROLLBACK INCOMPLETE; RETRY PDROP");
+                    else shell_result(nova_pt_status_name(mapped));
                 }
             }else{
                 (void)nova_owner_retire(owner);
@@ -1167,33 +1190,13 @@ static void shell_execute(void){
         struct nova_process_image *p=nova_process_find(&nova_processes,pid);
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
-            size_t slot=nova_process_index(p);
-            struct nova_user_space *space=&nova_user_spaces[slot];
-            const bool has_space=!nova_user_space_is_empty(space);
-            /* Validate before the first teardown step; after a callback failure,
-             * resume only from the retained retry state. */
-            if(!space->teardown_started&&
-               !nova_offline_drop_preflight(p,&nova_processes,space,
-                    &nova_user_pt_ops,nova_process_page_phys,
-                    &nova_image_guard_ops,NULL))
-                shell_result("OFFLINE PROCESS OWNERSHIP INVALID");
-            else{
-                (void)nova_save_unregister(&nova_private_saves,pid);
-                (void)nova_cap_unregister(&nova_app_policy,pid);
-                if(has_space&&!nova_user_space_destroy(space,&nova_user_pt_ops))
-                    shell_result("TEARDOWN INCOMPLETE; RETRY PDROP");
-                else{
-                    const uint64_t owner=p->owner;
-                    bool image_released=nova_process_drop_guarded(&nova_processes,pid,
-                        nova_process_page_phys,&nova_image_guard_ops,NULL);
-                    if(!image_released)
-                        shell_result("IMAGE RELEASE FAILED; TICKETS RETAINED");
-                    else if(!nova_owner_retire(owner))
-                        shell_result("OWNER RETIRE FAILED; INSPECT PMM");
-                    else
-                        shell_result("IMAGE+STACK+TABLES RELEASED");
-                }
-            }
+            const bool owner_pending=p->owner_retirement_pending;
+            if(nova_drop_staged_process(pid))
+                shell_result("IMAGE+STACK+TABLES+OWNER RELEASED");
+            else if(owner_pending)
+                shell_result("OWNER RETIRE FAILED; RESOLVE ORPHAN FRAMES THEN RETRY PDROP");
+            else
+                shell_result("PDROP BLOCKED; CHECK OWNERSHIP OR RETRY");
         }
     }
     else if(nova_file_equal(shell_input,"CLEAR")){
