@@ -149,6 +149,9 @@ static void test_role_transitions_and_corruption(void){
 }
 static void test_offline_role_integration(void){
     reset_pmm();
+    assert(nova_pmm_self_test());
+    assert(!strcmp(nova_elf_result_name(NOVA_ELF_OK),
+                   "VALID STATIC ELF64 (NOT EXECUTED)"));
     fixture();
     struct nova_process_table processes={0};
     uint32_t pid=0;
