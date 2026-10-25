@@ -4,6 +4,28 @@
 Debian/Linux, Windows or a browser app. It boots via Limine and draws its own
 macOS-inspired desktop.
 
+## What NOVA should become
+
+NOVA is being designed around three non-negotiable product goals:
+
+1. **Security first:** isolated and permission-controlled apps, non-writable
+   executable pages, protected game saves, verified updates, safe recovery,
+   privacy-friendly defaults and no dangerous installer before real tests.
+2. **Gaming without false promises:** a stable native game runtime, predictable
+   timing, controller support, audio, graphics acceleration and measured
+   performance **before** attempting the much larger job of Windows game
+   compatibility. No Steam, Proton, anti-cheat or 3D game support exists yet.
+3. **Mac-like ease of use:** a polished independent desktop with Dock,
+   Finder-style navigation, consistent windows, helpful settings, search,
+   accessibility and straightforward installation once safe.
+
+Read the actionable [NOVA product vision and final-release criteria](docs/product-vision.md)
+for priorities, current limitations and acceptance tests.
+
+**Current reality:** NOVA has a basic Arcade game (WASD/arrows, P to pause),
+a tested game-input abstraction and an experimental framebuffer UI.
+It is **not yet secure enough for daily use** and cannot run commercial games.
+
 ## Release policy — IMPORTANT
 
 **There will be no more automatic ISOs on pushes.** The ISO publishing workflow
@@ -23,6 +45,8 @@ without generating an ISO.
 - Custom framebuffer desktop, floating dock, Finder-style RAM file browser,
   Notes app, Arcade, Settings, Terminal, Inter-derived anti-aliased fonts.
 - Polling PS/2 keyboard and mouse for virtual machines.
+- Normalized keyboard game actions for the Arcade prototype; controller input
+  is an unconnected future-driver interface, not hardware gamepad support.
 - Bounded physical page allocator (up to 8 MiB, 4 KiB pages, self-tested).
 - Cooperative in-kernel jobs, IDT and software interrupt diagnostics.
   Hardware PIT IRQ0 delivery was not verified across QEMU runs and has a
@@ -66,6 +90,7 @@ disk filesystem.
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
 - `kernel/ps2_mouse.h`, `kernel/rtc.h`, `kernel/cpu.h`, `kernel/pci.h`
+- `kernel/game_input.h` — keyboard game actions, hold/release states and controller adapter
 - `tests/test_fat16.c` — synthetic MBR/superfloppy, FAT file, boundary and
   malformed-data tests, compiled with GCC and Clang/UBSan
 
