@@ -526,11 +526,17 @@ static void test_retryable_image_release(void){
     struct nova_process_image *image=nova_process_find(&table,pid);
     assert(image&&image->page_count==2);
     uint8_t *remaining=image->pages[0].frame;
+    struct nova_user_space empty={0};
+    assert(nova_user_space_is_empty(&empty));
+    assert(nova_offline_drop_preflight(image,&table,&empty,&ops,
+                                       legacy_phys,&guard,NULL));
     const uint32_t before=nova_pmm.in_use;
     fail_image_free_after=1;
     assert(!nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
     assert(image->staged&&image->page_count==1&&image->pages[0].frame==remaining);
     assert(nova_pmm.in_use==before-1u);
+    assert(nova_offline_drop_preflight(image,&table,&empty,&ops,
+                                       legacy_phys,&guard,NULL));
     assert(!nova_owner_retire(owner));
     assert(nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
     assert(!nova_process_find(&table,pid));
@@ -554,6 +560,9 @@ static void test_retryable_space_teardown(void){
     assert(space.page_tables.teardown_started&&!space.page_tables.prepared);
     assert(space.page_tables.tables_used==table_count);
     assert(nova_pmm.in_use==before-2u);
+    uint64_t probe_phys=0,probe_flags=0;
+    assert(!nova_pt_lookup(&space.page_tables,image->pages[0].virtual_page,
+                           &probe_phys,&probe_flags));
     assert(!nova_offline_drop_preflight(image,&table,&space,&ops,
                                         legacy_phys,&guard,NULL));
     fail_stack_free_after=-1;
