@@ -183,6 +183,14 @@ static void test_failures(void){
     assert(!t.tables_used && active==3);
     img->pages[0].frame=saved;
 
+    /* A changed staged physical identity must fail BEFORE allocating any
+     * page-table frame, even if the PMM callback still returns a valid page. */
+    uint64_t saved_physical=img->pages[0].physical_page;
+    img->pages[0].physical_page=saved_physical+4096u;
+    assert(nova_pt_prepare(&t,&ops,img)==NOVA_PT_BAD_FRAME);
+    assert(t.tables_used==0 && active==3);
+    img->pages[0].physical_page=saved_physical;
+
     img->pages[0].flags=7; /* W+X is rejected even after ELF validation. */
     assert(nova_pt_prepare(&t,&ops,img)==NOVA_PT_INVALID);
     assert(active==3);
