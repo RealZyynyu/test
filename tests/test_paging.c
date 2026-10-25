@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../kernel/paging.h"
+#include "../kernel/user_space.h"
 #define POOL 192u
 #define BINARY_BYTES 16384u
 
@@ -187,11 +188,105 @@ static void test_failures(void){
     assert(nova_process_drop(&p,id,release,NULL));
     assert(active==0);
 }
+static void test_guarded_user_stack(void){
+    image_fixture();
+    struct nova_process_table p={0};
+    uint32_t pid=stage(&p);
+    struct nova_process_image *img=nova_process_find(&p,pid);
+    assert(active==3);
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_OK);
+    assert(space.prepared);
+    assert(space.stack_count==NOVA_USER_STACK_PAGES);
+    assert(space.initial_rsp==NOVA_USER_STACK_TOP-16);
+    assert((space.initial_rsp&15u)==0);
+    assert(space.stack_top==NOVA_USER_STACK_TOP);
+    assert(space.guard_base==NOVA_USER_STACK_GUARD);
+    assert(space.page_tables.mapped_pages==img->page_count+NOVA_USER_STACK_PAGES);
+    assert(nova_user_stack_guard_is_unmapped(&space));
+    uint64_t phys=0,flags=0;
+    assert(!nova_pt_lookup(&space.page_tables,NOVA_USER_STACK_GUARD,&phys,&flags));
+    assert(!nova_pt_lookup(&space.page_tables,NOVA_USER_STACK_TOP,&phys,&flags));
+    assert(nova_pt_lookup(&space.page_tables,
+              NOVA_USER_STACK_TOP-NOVA_USER_STACK_PAGES*4096u,&phys,&flags));
+    assert((flags&(NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US|NOVA_PT_NX))==
+           (NOVA_PT_P|NOVA_PT_RW|NOVA_PT_US|NOVA_PT_NX));
+    for(uint32_t i=0;i<space.stack_count;i++){
+        assert(space.stack_frames[i]!=NULL);
+        for(unsigned b=0;b<4096;b++)
+            assert(((uint8_t*)space.stack_frames[i])[b]==0);
+    }
+    assert(nova_pt_lookup(&space.page_tables,0x401000,&phys,&flags));
+    assert(!(flags&NOVA_PT_RW)&&!(flags&NOVA_PT_NX)); /* code RX */
+    assert(nova_pt_lookup(&space.page_tables,0x402000,&phys,&flags));
+    assert((flags&(NOVA_PT_RW|NOVA_PT_NX))==(NOVA_PT_RW|NOVA_PT_NX));
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_INVALID);
+    nova_user_space_destroy(&space,&ops);
+    assert(active==3&&!space.prepared);
+    assert(nova_process_drop(&p,pid,release,NULL));
+    assert(active==0);
+}
+static void test_stack_failures(void){
+    image_fixture();
+    struct nova_process_table p={0};
+    uint32_t pid=stage(&p);
+    struct nova_process_image *img=nova_process_find(&p,pid);
+    struct nova_user_space space={0};
+    assert(!nova_user_stack_guard_is_unmapped(&space));
+
+    uint64_t old_va=img->pages[0].virtual_page;
+    img->pages[0].virtual_page=NOVA_USER_STACK_GUARD;
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_INVALID);
+    assert(active==3);
+    img->pages[0].virtual_page=old_va;
+
+    img->pages[0].virtual_page=NOVA_USER_STACK_TOP-4096u;
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_INVALID);
+    img->pages[0].virtual_page=old_va;
+
+    allocation_budget=4u; /* forces failure after page-table construction */
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_OUT_OF_MEMORY);
+    assert(active==3&&!space.prepared&&space.stack_count==0);
+    allocation_budget=UINT32_MAX;
+
+    struct nova_pt_ops incomplete=ops;
+    incomplete.physical_address=NULL;
+    assert(nova_user_space_prepare(&space,&incomplete,img)==NOVA_PT_INVALID);
+    assert(nova_user_space_prepare(NULL,&ops,img)==NOVA_PT_INVALID);
+    assert(nova_user_space_prepare(&space,&ops,NULL)==NOVA_PT_INVALID);
+    assert(nova_process_drop(&p,pid,release,NULL));
+    assert(active==0);
+}
+static void test_distinct_stack_frames(void){
+    image_fixture();
+    struct nova_process_table p={0};
+    uint32_t a=stage(&p),b=stage(&p);
+    struct nova_user_space x={0},y={0};
+    assert(nova_user_space_prepare(&x,&ops,nova_process_find(&p,a))==NOVA_PT_OK);
+    assert(nova_user_space_prepare(&y,&ops,nova_process_find(&p,b))==NOVA_PT_OK);
+    assert(x.page_tables.root_physical!=y.page_tables.root_physical);
+    uint64_t a_phys=0,b_phys=0,a_flags=0,b_flags=0;
+    assert(nova_pt_lookup(&x.page_tables,NOVA_USER_STACK_TOP-4096u,&a_phys,&a_flags));
+    assert(nova_pt_lookup(&y.page_tables,NOVA_USER_STACK_TOP-4096u,&b_phys,&b_flags));
+    assert(a_phys!=b_phys && a_flags==b_flags);
+    assert(nova_user_stack_guard_is_unmapped(&x));
+    assert(nova_user_stack_guard_is_unmapped(&y));
+    nova_user_space_destroy(&x,&ops);
+    assert(nova_user_stack_guard_is_unmapped(&y));
+    nova_user_space_destroy(&y,&ops);
+    assert(nova_process_drop(&p,a,release,NULL));
+    assert(nova_process_drop(&p,b,release,NULL));
+    assert(active==0);
+}
+
 int main(void){
     test_page_tables();
     test_isolated_roots();
     test_failures();
+    test_guarded_user_stack();
+    test_stack_failures();
+    test_distinct_stack_frames();
     assert(active==0);
-    puts("Offline paging: 4-level PML4 trees, USER/RW/NX bits, separate roots, rollback and no CR3 use.");
+    puts("Offline paging: PML4, guarded user stacks, W^X/NX, rollback, separate roots; no CR3 use.");
     return 0;
 }
