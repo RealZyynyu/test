@@ -79,6 +79,54 @@ static void check_allocation_ownership_and_wipe(void) {
     assert(nova_free_pages()==20u && nova_pmm.in_use==0);
     for(unsigned i=0;i<20u*4096u;i++)assert(emulated_ram[i]==0);
 }
+/* Inconsistent allocator metadata must not trigger a page wipe, bitmap
+ * out-of-bounds access, ownership assertion, or bogus free-page count.
+ * These tests use only host memory; they never access real hardware. */
+static void check_corrupt_metadata_fails_closed(void){
+    reset_allocator();
+    struct limine_memmap_entry valid={
+        .base=0x200000u,.length=20u*4096u,.type=LIMINE_MEMMAP_USABLE};
+    struct limine_memmap_entry *regions[]={&valid};
+    struct limine_memmap_response mm={.entry_count=1,.entries=regions};
+    struct limine_hhdm_response hhdm=mapped_to(0x200000u);
+    assert(nova_pmm_init(&mm,&hhdm));
+    uint8_t *live=(uint8_t*)nova_page_alloc();
+    assert(live==emulated_ram);
+    memset(live,0xA5,4096);
+    assert(nova_pmm_metadata_valid());
+    const struct nova_page_manager good=nova_pmm;
+    for(unsigned scenario=0;scenario<10;scenario++){
+        nova_pmm=good;
+        switch(scenario){
+            case 0: nova_pmm.pages=NOVA_PAGE_POOL_CAP+1u;break;
+            case 1: nova_pmm.pages=0;break;
+            case 2: nova_pmm.in_use=nova_pmm.pages+1u;break;
+            case 3: nova_pmm.in_use=0;break; /* live bitmap bit remains */
+            case 4: nova_pmm.bitmap[0]&=(uint8_t)~1u;break;
+            case 5: nova_pmm.bitmap[2]|=0x80u;break; /* outside 20 pages */
+            case 6: nova_pmm.bitmap[NOVA_BITMAP_SIZE-1u]|=0x80u;break;
+            case 7: nova_pmm.phys_base=UINT64_MAX-4095u;break;
+            case 8: nova_pmm.hhdm_offset=UINTPTR_MAX;break;
+            case 9: nova_pmm.hhdm_offset++;break; /* no page alignment */
+            default:assert(false);
+        }
+        assert(!nova_pmm_metadata_valid());
+        uint64_t phys=UINT64_C(0xC0FFEE);
+        assert(nova_page_alloc()==NULL);
+        assert(!nova_page_free(live));
+        assert(!nova_pmm_physical(live,&phys));
+        assert(phys==UINT64_C(0xC0FFEE));
+        assert(nova_free_pages()==0);
+        assert(!nova_pmm_self_test());
+        for(unsigned i=0;i<4096;i++)assert(live[i]==0xA5);
+    }
+    nova_pmm=good;
+    assert(nova_pmm_metadata_valid());
+    assert(nova_page_free(live));
+    assert(nova_free_pages()==20u);
+    for(unsigned i=0;i<4096;i++)assert(live[i]==0);
+    reset_allocator();
+}
 static void check_malformed_mappings_fail_closed(void) {
     reset_allocator();
     struct limine_memmap_entry broken={
@@ -102,6 +150,10 @@ static void check_malformed_mappings_fail_closed(void) {
     assert(!nova_pmm.initialized);
     /* Sub-page region and fewer than eight pages are insufficient. */
     hhdm=mapped_to(0x200000u);
+    /* Even an otherwise valid pool must reject a misaligned HHDM. */
+    hhdm.offset++;
+    assert(!nova_pmm_init(&mm,&hhdm));
+    hhdm.offset--;
     broken.length=4095u;
     assert(!nova_pmm_init(&mm,&hhdm));
     broken.length=7u*4096u;
@@ -118,7 +170,8 @@ static void check_malformed_mappings_fail_closed(void) {
 int main(void){
     check_reject_overflow_and_reserved();
     check_allocation_ownership_and_wipe();
+    check_corrupt_metadata_fails_closed();
     check_malformed_mappings_fail_closed();
-    puts("PMM: overflowed memmap/HHDM rejected, ownership checked, freed RAM zeroed, and exhaustion safe.");
+    puts("PMM: malformed memmap/HHDM and metadata rejected, ownership checked, freed RAM zeroed, exhaustion safe.");
     return 0;
 }
