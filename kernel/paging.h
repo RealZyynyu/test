@@ -12,7 +12,8 @@
  * activated as a CPU address space. The current Limine tables stay in use.
  *
  * The entire prepared tree is bounded and owned by its descriptor.
- * Failure rolls back allocated table frames, never image-data frames.
+ * Failure attempts rollback; if a trusted release callback fails, the
+ * descriptor retains remaining tickets for retry. Image frames are never freed here.
  */
 #ifndef NOVA_PAGING_H
 #define NOVA_PAGING_H
