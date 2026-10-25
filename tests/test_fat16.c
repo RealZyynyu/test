@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../kernel/fat16.h"
+#include "../kernel/vfs.h"
 #define SECTORS 16384u
 static uint8_t disk[SECTORS][512];
 static unsigned read_count=0;
@@ -106,10 +107,69 @@ static void verify(uint32_t partition_start){
     boot[13]=1;
     boot[510]=0;assert(!nova_fat16_mount(&vol,memory_reader,NULL,SECTORS));
 }
+
+static void verify_vfs(void){
+    fixture(0);
+    struct nova_fat16 diskfs;
+    assert(nova_fat16_mount(&diskfs,memory_reader,NULL,SECTORS));
+    struct nova_vfs vfs={.disk=&diskfs};
+    struct nova_vfs_entry entry;
+    uint32_t size=0;bool ro=false;
+
+    assert(nova_vfs_list(&vfs,"RAM:/",0,&entry));
+    assert(!strcmp(entry.name,"NOTES.TXT")&&entry.read_only);
+    assert(nova_vfs_list(&vfs,"DISK:/",0,&entry));
+    assert(!strcmp(entry.name,"HELLO.TXT")&&entry.size==600&&entry.read_only);
+    assert(nova_vfs_list(&vfs,"DISK:/",1,&entry));
+    assert(!strcmp(entry.name,"SMALL.TXT")&&entry.size==5);
+    assert(!nova_vfs_list(&vfs,"DISK:/",2,&entry));
+    assert(!nova_vfs_list(&vfs,"DISK:/HELLO.TXT",0,&entry));
+
+    assert(nova_vfs_size(&vfs,"DISK:/HELLO.TXT",&size,&ro));
+    assert(size==600&&ro);
+    uint8_t contents[16]={0};
+    assert(nova_vfs_read(&vfs,"DISK:/HELLO.TXT",510,contents,10));
+    assert(contents[0]=='A'&&contents[1]=='A'&&contents[2]=='B');
+    assert(!nova_vfs_read(&vfs,"DISK:/HELLO.TXT",595,contents,10));
+    assert(!nova_vfs_size(&vfs,"DISK:/MISS.TXT",&size,&ro));
+
+    assert(nova_vfs_create(&vfs,"RAM:/WORK.TXT"));
+    assert(nova_vfs_write(&vfs,"RAM:/WORK.TXT",(const uint8_t*)"NOVA",4));
+    assert(nova_vfs_size(&vfs,"RAM:/WORK.TXT",&size,&ro));
+    assert(size==4&&!ro);
+    memset(contents,0,sizeof(contents));
+    assert(nova_vfs_read(&vfs,"RAM:/WORK.TXT",0,contents,4));
+    assert(!memcmp(contents,"NOVA",4));
+    assert(!nova_vfs_write(&vfs,"RAM:/WORK.TXT",(const uint8_t*)"X",128));
+    assert(nova_vfs_remove(&vfs,"RAM:/WORK.TXT"));
+    assert(!nova_vfs_size(&vfs,"RAM:/WORK.TXT",&size,&ro));
+    assert(!nova_vfs_remove(&vfs,"RAM:/NOTES.TXT")); /* protected system file */
+
+    /* Hard read-only boundary: not even the API offers disk writes. */
+    assert(!nova_vfs_create(&vfs,"DISK:/BAD.TXT"));
+    assert(!nova_vfs_write(&vfs,"DISK:/SMALL.TXT",(const uint8_t*)"X",1));
+    assert(!nova_vfs_remove(&vfs,"DISK:/SMALL.TXT"));
+    assert(!nova_vfs_create(&vfs,"RAM:/../../BAD"));
+    assert(!nova_vfs_create(&vfs,"RAM:/SPACE BAD"));
+    assert(!nova_vfs_create(&vfs,"RAM:/TOO-LONG-FILENAME.TXT"));
+    assert(!nova_vfs_read(&vfs,"DISK:/../HELLO.TXT",0,contents,2));
+    assert(!nova_vfs_read(&vfs,"RAM:/NONEXIST",0,contents,2));
+    assert(!nova_vfs_read(&vfs,"FILE:/HELLO.TXT",0,contents,2));
+    assert(!nova_vfs_read(&vfs,"DISK:/HELLO.TXT",(size_t)-1,contents,1));
+    assert(!nova_vfs_read(&vfs,"DISK:/HELLO.TXT",0,NULL,1));
+    assert(nova_vfs_read(&vfs,"DISK:/HELLO.TXT",600,NULL,0));
+
+    struct nova_vfs no_disk={.disk=NULL};
+    assert(!nova_vfs_list(&no_disk,"DISK:/",0,&entry));
+    assert(!nova_vfs_read(&no_disk,"DISK:/HELLO.TXT",0,contents,2));
+    assert(nova_vfs_list(&no_disk,"RAM:/",0,&entry));
+}
+
 int main(void){
     verify(0);   /* superfloppy */
     verify(1);   /* partitioned MBR */
+    verify_vfs();
     assert(read_count>0);
-    puts("FAT16 read-only parser: all tests passed (MBR, root, 8.3, cluster chaining, bounds, malformed)");
+    puts("FAT16 and VFS tests passed (read-only disk, RAM writes, path validation, cluster bounds, MBR)");
     return 0;
 }
