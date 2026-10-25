@@ -131,12 +131,12 @@ static bool nova_fat16_entry(const struct nova_fat16 *fs,size_t position,
 }
 static bool nova_fat16_find(const struct nova_fat16 *fs,const char *name,
                             struct nova_fat_file *out){
-    if(!name||!out)return false;
+    if(!fs||!fs->mounted||!name||!out)return false;
     for(size_t i=0;i<fs->root_entries;i++){
         struct nova_fat_file file;
         if(!nova_fat16_entry(fs,i,&file))return false;
         const char *a=file.name,*b=name;
-        while(*a&&*b){if(*a++!=*b++)break;}
+        while(*a&&*b&&*a==*b){a++;b++;}
         if(!*a&&!*b){*out=file;return true;}
     }
     return false;
