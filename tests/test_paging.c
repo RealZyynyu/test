@@ -465,6 +465,117 @@ static void test_stack_allocator_ownership(void){
     }
 }
 
+/* Access validation must use the offline mapping manifest, not raw
+ * possibly corrupted PTEs. Deliberately mutate only simulated host memory.
+ * No CR3 changes, CPU page faults or user execution are involved.
+ */
+static uint64_t *raw_pte(struct nova_page_table *tree,uint64_t va){
+    uint64_t *entries=nova_pt_find(tree,tree->root_physical);
+    assert(entries);
+    for(unsigned level=0;level<3;level++){
+        unsigned shift=39u-9u*level;
+        uint64_t entry=entries[(va>>shift)&511u];
+        assert(entry&NOVA_PT_P);
+        entries=nova_pt_find(tree,entry&NOVA_PT_ADDR);
+        assert(entries);
+    }
+    return &entries[(va>>12)&511u];
+}
+static void test_offline_pte_integrity(void){
+    image_fixture();
+    struct nova_process_table processes={0};
+    uint32_t pid=stage(&processes);
+    struct nova_process_image *img=nova_process_find(&processes,pid);
+    assert(img && active==3);
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&ops,img)==NOVA_PT_OK);
+    struct nova_page_table *tree=&space.page_tables;
+    assert(nova_user_stack_guard_is_unmapped(&space));
+    assert(nova_pt_slot_empty(tree,NOVA_USER_STACK_GUARD));
+    assert(!nova_pt_slot_empty(tree,0x401000));
+    uint64_t phys=0,attr=0;
+    uint64_t *code=raw_pte(tree,0x401000);
+    uint64_t *data=raw_pte(tree,0x402000);
+    uint64_t *guard=raw_pte(tree,NOVA_USER_STACK_GUARD);
+    uint64_t *stack=raw_pte(tree,NOVA_USER_STACK_TOP-3u*4096u);
+    uint64_t saved_code=*code,saved_data=*data,saved_stack=*stack;
+    assert(*guard==0);
+    assert(nova_user_span_accessible(&space,0x401000,8,false));
+    assert(nova_user_span_accessible(&space,0x402000,8,true));
+
+    /* Escalating RX code to RW must not authorize a copyout. */
+    *code|=NOVA_PT_RW;
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    assert(!nova_user_span_accessible(&space,0x401000,8,false));
+    assert(!nova_user_span_accessible(&space,0x401000,8,true));
+    *code=saved_code;
+
+    /* Removing NX from RW data must fail closed, even for a read. */
+    *data&=~NOVA_PT_NX;
+    assert(!nova_pt_lookup(tree,0x402000,&phys,&attr));
+    assert(!nova_user_span_accessible(&space,0x402000,8,false));
+    *data=saved_data;
+
+    /* An attacker must not replace an RX frame with a different owned
+     * frame without changing the manifest. */
+    *code=(*code&~NOVA_PT_ADDR)|(saved_data&NOVA_PT_ADDR);
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    *code=saved_code;
+
+    /* A present or merely nonzero guard PTE is never an empty slot.
+     * An unregistered PTE must not be readable through the validator. */
+    *guard=saved_data;
+    assert(!nova_pt_lookup(tree,NOVA_USER_STACK_GUARD,&phys,&attr));
+    assert(!nova_pt_slot_empty(tree,NOVA_USER_STACK_GUARD));
+    assert(!nova_user_stack_guard_is_unmapped(&space));
+    assert(!nova_user_span_accessible(&space,NOVA_USER_STACK_GUARD,8,false));
+    *guard=NOVA_PT_NX;
+    assert(!nova_pt_slot_empty(tree,NOVA_USER_STACK_GUARD));
+    assert(!nova_user_stack_guard_is_unmapped(&space));
+    *guard=0;
+    assert(nova_pt_slot_empty(tree,NOVA_USER_STACK_GUARD));
+
+    /* The guard validator must check all four leaves, not just the top. */
+    *stack&=~NOVA_PT_NX;
+    assert(!nova_user_stack_guard_is_unmapped(&space));
+    *stack=saved_stack;
+
+    /* Parent rights and unexpected bits are also integrity failures. */
+    uint64_t *root=nova_pt_find(tree,tree->root_physical);
+    assert(root);
+    uint64_t *pml4e=&root[(UINT64_C(0x401000)>>39)&511u];
+    uint64_t saved_parent=*pml4e;
+    *pml4e&=~NOVA_PT_US;
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    *pml4e=saved_parent|NOVA_PT_NX;
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    *pml4e=saved_parent;
+
+    /* A damaged manifest or invalid count must never cause OOB access. */
+    uint64_t saved_entry=tree->mapped_entry[0];
+    tree->mapped_entry[0]^=NOVA_PT_RW;
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    tree->mapped_entry[0]=saved_entry;
+    uint16_t saved_count=tree->mapped_pages;
+    tree->mapped_pages=UINT16_MAX;
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    assert(!nova_pt_slot_empty(tree,NOVA_USER_STACK_GUARD));
+    tree->mapped_pages=saved_count;
+    saved_count=tree->tables_used;
+    tree->tables_used=UINT16_MAX;
+    assert(!nova_pt_lookup(tree,0x401000,&phys,&attr));
+    assert(!nova_pt_slot_empty(tree,NOVA_USER_STACK_GUARD));
+    tree->tables_used=saved_count;
+
+    assert(nova_pt_lookup(tree,0x401000,&phys,&attr));
+    assert(nova_user_span_accessible(&space,0x402000,8,true));
+    assert(nova_user_stack_guard_is_unmapped(&space));
+    nova_user_space_destroy(&space,&ops);
+    assert(active==3);
+    assert(nova_process_drop(&processes,pid,release,NULL));
+    assert(active==0);
+}
+
 int main(void){
     test_page_tables();
     test_isolated_roots();
@@ -474,6 +585,7 @@ int main(void){
     test_stack_failures();
     test_distinct_stack_frames();
     test_stack_allocator_ownership();
+    test_offline_pte_integrity();
     assert(active==0);
     puts("Offline paging: PML4, guarded user stacks, W^X/NX, rollback, separate roots; no CR3 use.");
     return 0;
