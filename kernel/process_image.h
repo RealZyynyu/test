@@ -9,7 +9,8 @@
  * - Virtual addresses are just metadata; frames are still kernel-addressable.
  * - Flags describe intended protections, NOT hardware-enforced rights.
  * - No scheduling, system calls, privilege isolation, execution or threads.
- * - Each image is limited to 128 KiB and can be freed atomically.
+ * - Each image is limited to 128 KiB; callback failures retain remaining
+ *   frame tickets for retry, so cleanup is not an atomic transaction.
  *
  * The allocator and read callbacks allow host tests without hardware.
  */
