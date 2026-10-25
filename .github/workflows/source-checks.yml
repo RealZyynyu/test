@@ -12,6 +12,192 @@ on:
 permissions:
   contents: read
 jobs:
+  cpu-faults:
+    name: CPU exception diagnostics and vector wiring (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check all 32 x86-64 exception vector stubs
+        run: python3 tests/test_fault_stubs.py
+      - name: Test CPU fault formatter using GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_fault.c -o /tmp/nova-fault-test
+          /tmp/nova-fault-test
+      - name: Test bounded exception reports with Clang/UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_fault.c -o /tmp/nova-fault-sanitized
+          /tmp/nova-fault-sanitized
+      - name: Assemble exception entry stubs without producing an ISO
+        run: |
+          clang -c -x assembler kernel/irq.S -o /tmp/nova-irq.o
+          nm /tmp/nova-irq.o | grep -q ' nova_exception_31
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test overflow checks, page ownership and zero-on-free using GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs tests/test_pmm.c -o /tmp/nova-pmm-test
+          /tmp/nova-pmm-test
+      - name: Test memory allocator under Clang ASan and UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_pmm.c -o /tmp/nova-pmm-test-sanitized
+          /tmp/nova-pmm-test-sanitized
+  safety-policy:
+    name: Safety policy checks (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert read-only disk, offline process staging and manual ISO release
+        run: python3 tests/test_safety_policy.py
+  broker:
+    name: Bounded kernel broker ABI and permissions (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify fixed-buffer request handling with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_broker.c -o /tmp/nova-test-broker
+          /tmp/nova-test-broker
+      - name: Validate denial paths with Clang sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_broker.c -o /tmp/nova-test-broker-sanitized
+          /tmp/nova-test-broker-sanitized
+  game-controls:
+    name: Arcade/game-input tests (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run game controls under GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_game_input.c -o /tmp/nova-game-input
+          /tmp/nova-game-input
+      - name: Clang sanitizer game controls
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=undefined -fno-sanitize-recover=all \
+            tests/test_game_input.c -o /tmp/nova-game-input-ubsan
+          /tmp/nova-game-input-ubsan
+  native-kernel:
+    name: Compile native kernel only (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install freestanding build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm make git python3-pil fonts-inter
+      - name: Generate font assets
+        run: python3 tools/generate_font.py
+      - name: Get upstream freestanding headers
+        run: |
+          git clone --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git _kernel_builder
+          cd _kernel_builder
+          ./kernel/get-deps
+      - name: Copy native NOVA kernel source
+        run: |
+          cp kernel/main.c kernel/*.h kernel/irq.S _kernel_builder/kernel/src/
+      - name: Compile and link kernel ELF, without constructing an ISO
+        run: |
+          make -C _kernel_builder/kernel TOOLCHAIN=llvm all
+          test -s _kernel_builder/kernel/bin/kernel
+          test ! -f _kernel_builder/template.iso
+          echo "Native NOVA kernel compiled and linked. No ISO was generated."
+  elf64:
+    name: ELF64, FAT16 and app capability tests (no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run ELF64 layout tests with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_elf64.c -o /tmp/nova-elf64-test
+          /tmp/nova-elf64-test
+      - name: Compile and run ELF64 tests with Clang/UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=undefined -fno-sanitize-recover=all \
+            tests/test_elf64.c -o /tmp/nova-elf64-test-ubsan
+          /tmp/nova-elf64-test-ubsan
+      - name: Test ELF64 staging and default-deny capability policy over VFS
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_elf_vfs.c -o /tmp/nova-elf-vfs
+          /tmp/nova-elf-vfs
+      - name: Clang UBSan ELF64 and VFS integration
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=undefined -fno-sanitize-recover=all \
+            tests/test_elf_vfs.c -o /tmp/nova-elf-vfs-ubsan
+          /tmp/nova-elf-vfs-ubsan
+  staged-images:
+    name: Staged process image and memory lifecycle tests (no execution)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test staged ELF PT_LOAD images with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_process_image.c -o /tmp/nova-process-test
+          /tmp/nova-process-test
+      - name: Test process image allocation and rollback with sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_process_image.c -o /tmp/nova-process-test-sanitized
+          /tmp/nova-process-test-sanitized
+  paging:
+    name: Offline PML4 mapping and W^X tests (no CR3 and no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test x86-64 page tables with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_paging.c -o /tmp/nova-paging-test
+          /tmp/nova-paging-test
+      - name: Check rollback and physical mappings under Clang sanitizers
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_paging.c -o /tmp/nova-paging-sanitized
+          /tmp/nova-paging-sanitized
+  fat16:
+    name: Read-only FAT16 host tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with GCC warnings enabled
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_fat16.c -o /tmp/nova-test-fat16
+      - name: Execute synthetic-disk tests
+        run: /tmp/nova-test-fat16
+      - name: Clang + undefined-behavior sanitizer
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=undefined -fno-sanitize-recover=all \
+            tests/test_fat16.c -o /tmp/nova-test-fat16-ubsan
+          /tmp/nova-test-fat16-ubsan
+      - name: Verify final ISO still needs manual approval
+        run: |
+          grep -q 'workflow_dispatch:' .github/workflows/build-native-iso.yml
+          grep -q 'final_release:' .github/workflows/build-native-iso.yml
+          if grep -Eq '^  push:' .github/workflows/build-native-iso.yml; then
+            echo "ERROR: final ISO workflow must not build on pushes" >&2
+            exit 1
+          fi
+          echo "Final ISO is manual-only."
+
   pmm:
     name: Physical memory allocator hardening (no ISO)
     runs-on: ubuntu-24.04
