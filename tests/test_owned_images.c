@@ -687,6 +687,10 @@ static void test_retryable_owner_retirement(void){
     assert(!nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
     assert(!nova_process_frames_releasable_guarded(
         image,&table,legacy_phys,NULL,&guard));
+    image->rollback_pending=true; /* conflicting teardown states are invalid */
+    assert(!nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
+                                            retire_owner_for_test,NULL));
+    image->rollback_pending=false;
     image->entry=0x400000u; /* corrupt tombstone metadata must not retire */
     assert(!nova_process_drop_owned_guarded(&table,pid,legacy_phys,&guard,
                                             retire_owner_for_test,NULL));
