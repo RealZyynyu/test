@@ -33,6 +33,12 @@ int main(void){
     processes.slots[0].pid=42;
     struct nova_cap_registry rights={0};
     struct nova_vfs vfs={.disk=NULL};
+    struct nova_vfs_entry first_entry;
+    assert(nova_vfs_list(&vfs,"RAM:/",0,&first_entry));
+    assert(first_entry.name[0]!=0);
+    struct nova_fat16 nonexistent={0};
+    assert(!nova_fat16_mount(&nonexistent,NULL,NULL,0));
+    assert(nova_elf_result_name(NOVA_ELF_OK)[0]!=0);
     struct nova_broker_context ctx={
         .rights=&rights,.processes=&processes,.vfs=&vfs};
     struct nova_broker_request req={0};
