@@ -90,7 +90,7 @@ Die Freigabe- und Zuteilungsprüfungen berücksichtigen diese ausstehenden Slots
 
 Ein vom Allocator zurückgegebener verdächtiger Frame wird weiterhin absichtlich nicht freigegeben. Bei owner-gebundenen Zuteilungen bleibt in diesem Fall die Eigentümer-ID auch dann erhalten, wenn die übrigen Image-Frames zurückgerollt wurden. Das verhindert eine vergessene Eigentümerstilllegung, garantiert aber keine automatische Wiederherstellung des verdächtigen Frames.
 
-Der Host-Regressionstest `test_retryable_stage_rollback` injiziert einen Lese- und einen einmaligen Freigabefehler während `PSTAGE`. Er prüft den nicht gestaged reservierten Slot, die Möglichkeit eines zweiten unabhängigen Images in einem anderen Slot, den Erhalt aller Tickets und die getrennte Wiederholung der Eigentümerstilllegung nach Beseitigung eines zusätzlichen Frames. Die Implementierung ist dokumentiert; ihr tatsächlicher Ausführungsstatus muss am CI-Lauf des konkreten Commits verifiziert werden.
+Der Host-Regressionstest `test_retryable_stage_rollback` injiziert einen Lese- und einen einmaligen Freigabefehler während `PSTAGE`. Er prüft den nicht gestaged reservierten Slot, die Ablehnung beschädigter Pending-Metadaten, die Möglichkeit eines zweiten unabhängigen Images in einem anderen Slot, den Erhalt aller Tickets und die getrennte Wiederholung der Eigentümerstilllegung nach Beseitigung eines zusätzlichen Frames. Zusätzlich simuliert er einen Allocator mit falscher Generation: Der verdächtige Frame wird nicht beschrieben oder freigegeben, und seine Eigentümer-ID bleibt bis zur sicheren Auflösung erhalten. Die Implementierung ist dokumentiert; ihr tatsächlicher Ausführungsstatus muss am CI-Lauf des konkreten Commits verifiziert werden.
 
 ## Verbleibende Grenzen
 
