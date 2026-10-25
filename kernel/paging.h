@@ -111,6 +111,7 @@ struct nova_page_table {
     uint64_t table_generation[NOVA_PT_MAX_TABLES];
     uint64_t owner; /* original registered owner of ALL table frames, 0 for legacy */
     bool tables_guarded; /* generation-checked table frame ownership */
+    bool teardown_started; /* retry-only state; mappings must never be reused */
     bool prepared;
 };
 static inline const char *nova_pt_status_name(enum nova_pt_result r){
@@ -133,7 +134,8 @@ static inline bool nova_pt_valid_user(uint64_t va){
 }
 static inline uint64_t *nova_pt_find(const struct nova_page_table *tree,
                                      uint64_t phys){
-    if(!tree||tree->tables_used>NOVA_PT_MAX_TABLES)return NULL;
+    if(!tree||tree->teardown_started||
+       tree->tables_used>NOVA_PT_MAX_TABLES)return NULL;
     for(uint16_t i=0;i<tree->tables_used;i++){
         if(tree->table_physical[i]==phys)return (uint64_t *)tree->tables[i];
     }
@@ -142,6 +144,7 @@ static inline uint64_t *nova_pt_find(const struct nova_page_table *tree,
 static inline enum nova_pt_result nova_pt_new_table(
     struct nova_page_table *tree,const struct nova_pt_ops *ops,uint64_t **result,
     uint64_t *physical){
+    if(!tree||!ops||tree->teardown_started)return NOVA_PT_INVALID;
     if(tree->tables_used>=NOVA_PT_MAX_TABLES)return NOVA_PT_RESOURCE_LIMIT;
     void *page=NULL;
     uint64_t generation=0;
@@ -216,7 +219,9 @@ static inline bool nova_pt_tables_releasable(
        tree->tables_used>NOVA_PT_MAX_TABLES||
        tree->protected_count>NOVA_PROCESS_MAX_PAGES||
        tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
-       tree->pending_leaf_frame||tree->pending_leaf_physical)return false;
+       tree->pending_leaf_frame||tree->pending_leaf_physical||
+       (tree->tables_used==0 &&
+        (tree->root_physical!=0 || tree->mapped_pages!=0)))return false;
     if(tree->owner && (!tree->tables_guarded||
        !ops->table_owned_ticket_allocate||
        !ops->table_owned_ticket_physical_address||
@@ -253,29 +258,50 @@ static inline bool nova_pt_tables_releasable(
     }
     return true;
 }
-static inline void nova_pt_destroy(struct nova_page_table *tree,
+static inline bool nova_pt_destroy(struct nova_page_table *tree,
                                     const struct nova_pt_ops *ops){
-    if(!tree)return;
-    if(nova_pt_tables_releasable(tree,ops)){
-        for(uint16_t i=0;i<tree->tables_used;i++){
-            if(tree->owner)
-                (void)ops->table_owned_ticket_release(ops->context,tree->owner,
+    if(!tree||!ops||!nova_pt_tables_releasable(tree,ops))return false;
+    tree->teardown_started=true;
+    tree->prepared=false;
+    /* Keep the root until every child has been released. On callback failure,
+     * retain the failed frame and remaining tickets for a safe retry. */
+    while(tree->tables_used>1u){
+        uint16_t i=(uint16_t)(tree->tables_used-1u);
+        bool released=true;
+        if(tree->owner)
+            released=ops->table_owned_ticket_release(ops->context,tree->owner,
                        tree->tables[i],tree->table_generation[i]);
-            else if(tree->tables_guarded)
-                (void)ops->table_ticket_release(ops->context,tree->tables[i],
+        else if(tree->tables_guarded)
+            released=ops->table_ticket_release(ops->context,tree->tables[i],
                                                 tree->table_generation[i]);
-            else
-                ops->release(ops->context,tree->tables[i]);
-        }
+        else
+            ops->release(ops->context,tree->tables[i]);
+        if(!released)return false;
+        tree->tables[i]=NULL;
+        tree->table_physical[i]=0;
+        tree->table_generation[i]=0;
+        tree->tables_used--;
     }
-    /* Even when ownership cannot be verified, discard the suspect tree.
-     * Retaining it could allow accidental reuse of compromised metadata. */
+    if(tree->tables_used==1u){
+        bool released=true;
+        if(tree->owner)
+            released=ops->table_owned_ticket_release(ops->context,tree->owner,
+                       tree->tables[0],tree->table_generation[0]);
+        else if(tree->tables_guarded)
+            released=ops->table_ticket_release(ops->context,tree->tables[0],
+                                                tree->table_generation[0]);
+        else
+            ops->release(ops->context,tree->tables[0]);
+        if(!released)return false;
+    }
     *tree=(struct nova_page_table){0};
+    return true;
 }
 static inline enum nova_pt_result nova_pt_map_one(
     struct nova_page_table *tree,const struct nova_pt_ops *ops,
     uint64_t va,uint64_t physical,uint32_t flags){
-    if(!tree||!ops||!tree->root_physical||!nova_pt_valid_user(va)||
+    if(!tree||!ops||tree->teardown_started||!tree->root_physical||
+       !nova_pt_valid_user(va)||
        !nova_pt_valid_phys(physical) || (flags&~7u) ||
        ((flags&3u)==3u) || tree->tables_used>NOVA_PT_MAX_TABLES ||
        tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES ||
@@ -337,7 +363,8 @@ static inline enum nova_pt_result nova_pt_prepare(
     if(!tree||!ops||!ops->allocate||!ops->release||
        !ops->physical_address||!image||!image->staged||!image->page_count ||
        image->page_count>NOVA_PROCESS_MAX_PAGES ||
-       tree->tables_used||tree->prepared)return NOVA_PT_INVALID;
+       tree->tables_used||tree->prepared||tree->teardown_started)
+        return NOVA_PT_INVALID;
     const bool guarded=ops->table_ticket_allocate||
                        ops->table_ticket_physical_address||
                        ops->table_ticket_release;
@@ -399,8 +426,8 @@ static inline enum nova_pt_result nova_pt_prepare(
  */
 static inline bool nova_pt_lookup(const struct nova_page_table *tree,
                    uint64_t va,uint64_t *physical,uint64_t *attributes){
-    if(!tree||!tree->prepared||!nova_pt_valid_user(va)||
-       !physical||!attributes||
+    if(!tree||!tree->prepared||tree->teardown_started||
+       !nova_pt_valid_user(va)||!physical||!attributes||
        tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
        tree->tables_used>NOVA_PT_MAX_TABLES)return false;
     uint64_t expected=0;
@@ -444,8 +471,8 @@ static inline bool nova_pt_lookup(const struct nova_page_table *tree,
  */
 static inline bool nova_pt_slot_empty(const struct nova_page_table *tree,
                                       uint64_t va){
-    if(!tree||!tree->prepared||!nova_pt_valid_user(va)||
-       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
+    if(!tree||!tree->prepared||tree->teardown_started||
+       !nova_pt_valid_user(va)||tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
        tree->tables_used>NOVA_PT_MAX_TABLES)return false;
     for(uint16_t i=0;i<tree->mapped_pages;i++)
         if(tree->mapped_virtual[i]==va)return false;
