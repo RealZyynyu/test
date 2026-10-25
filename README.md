@@ -89,6 +89,7 @@ disk filesystem.
 - `kernel/capabilities.h` — staged-app default-deny file-access policy
 - `kernel/broker.h` — fixed-size simulated syscall requests (no hardware trap)
 - `kernel/user_buffer.h` — offline virtual-memory span checks
+- `kernel/app_storage.h` — volatile per-program RAM save slots (64 B)
 - `kernel/pmm.h` — physical page allocator
 - `kernel/scheduler.h` — cooperative in-kernel job runner
 - `kernel/interrupts.h`, `kernel/irq.S` — experimental interrupts
@@ -312,6 +313,23 @@ and kernel-enforced process identities.
 
 See [the simulated syscall broker specification](docs/syscall-broker-draft.md).
 The final ISO remains manually gated and **has not been created**.
+
+## Private volatile game-save storage (development only)
+
+NOVA now has an **experimental per-staged-PID 64-byte RAM save blob**
+(`kernel/app_storage.h`). The bounded broker can read, write, and
+report the size of a save **only with an explicit, kernel-granted
+`NOVA_CAP_APP_SAVE` capability**, never by guessing another PID in the
+request. Staged programs start with no rights. Their save slot is
+registered at `PSTAGE` and wiped at `PDROP`. Host-side broker tests
+check separate saves for two programs, stale PIDs, oversized requests,
+invalid paths, and revocation. There is no user-facing save UI yet.
+
+**Not persistent or hardware isolated.** These tiny save blobs vanish
+when the image is dropped or NOVA reboots, and Ring-0 kernel code can
+still access them. Full game saves require actual user processes,
+identity-bound app directories, persistent storage and crash recovery.
+No disk write access has been enabled.
 
 ## Important missing features / final-release blockers
 
