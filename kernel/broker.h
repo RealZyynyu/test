@@ -82,8 +82,10 @@ static inline enum nova_broker_status nova_broker_dispatch(
     *response=(struct nova_broker_response){0};
     response->status=NOVA_BROKER_INVALID_REQUEST;
     if(!context||!context->rights||!context->processes||!context->vfs||
-       !request||trusted_pid==0)return response->status;
-    if(!nova_cap_lookup(context->rights,context->processes,trusted_pid)){
+       !request)return response->status;
+    /* An absent identity is denied, never interpreted as a kernel caller. */
+    if(trusted_pid==0||
+       !nova_cap_lookup(context->rights,context->processes,trusted_pid)){
         response->status=NOVA_BROKER_DENIED;
         return response->status;
     }
