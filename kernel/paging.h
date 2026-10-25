@@ -71,6 +71,9 @@ struct nova_pt_ops {
     nova_pt_ticket_alloc_fn stack_ticket_allocate;
     nova_pt_ticket_phys_fn stack_ticket_physical_address;
     nova_pt_ticket_free_fn stack_ticket_release;
+    nova_pt_owned_ticket_alloc_fn stack_owned_ticket_allocate;
+    nova_pt_owned_ticket_phys_fn stack_owned_ticket_physical_address;
+    nova_pt_owned_ticket_free_fn stack_owned_ticket_release;
 };
 static inline nova_pt_phys_fn nova_pt_table_physical(const struct nova_pt_ops *ops){
     return ops->table_physical_address?

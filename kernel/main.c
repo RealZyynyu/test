@@ -792,6 +792,33 @@ static bool nova_stack_ticket_release(void *ctx,void *frame,
     };
     return nova_page_free_ticket(&ticket);
 }
+/* Trusted owner-bound stack tickets for offline staged images. */
+static bool nova_stack_owned_ticket_allocate(void *ctx,uint64_t owner,
+                                             void **frame,uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation)return false;
+    *frame=NULL;*generation=0;
+    struct nova_frame_ticket ticket={0};
+    if(!nova_page_alloc_owned_ticket(NOVA_FRAME_STACK,owner,&ticket))return false;
+    *frame=ticket.frame;*generation=ticket.generation;
+    return true;
+}
+static bool nova_stack_owned_ticket_physical(void *ctx,uint64_t owner,
+        const void *frame,uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=(void *)frame,.generation=generation,
+        .role=NOVA_FRAME_STACK,.owner=owner};
+    return nova_pmm_physical_ticket(&ticket,out);
+}
+static bool nova_stack_owned_ticket_release(void *ctx,uint64_t owner,
+                                           void *frame,uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=frame,.generation=generation,
+        .role=NOVA_FRAME_STACK,.owner=owner};
+    return nova_page_free_ticket(&ticket);
+}
 static const struct nova_pt_ops nova_user_pt_ops={
     .context=NULL,
     .allocate=nova_table_page_allocate,
@@ -810,7 +837,10 @@ static const struct nova_pt_ops nova_user_pt_ops={
     .stack_physical_address=nova_stack_page_phys,
     .stack_ticket_allocate=nova_stack_ticket_allocate,
     .stack_ticket_physical_address=nova_stack_ticket_physical,
-    .stack_ticket_release=nova_stack_ticket_release
+    .stack_ticket_release=nova_stack_ticket_release,
+    .stack_owned_ticket_allocate=nova_stack_owned_ticket_allocate,
+    .stack_owned_ticket_physical_address=nova_stack_owned_ticket_physical,
+    .stack_owned_ticket_release=nova_stack_owned_ticket_release
 };
 static size_t nova_process_index(const struct nova_process_image *image){
     return (size_t)(image-&nova_processes.slots[0]);

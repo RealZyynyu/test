@@ -140,13 +140,53 @@ static bool forged_owned_table_alloc(void *ctx,uint64_t owner,void **frame,
     (*generation)++;
     return true;
 }
+static unsigned stack_budget=UINT32_MAX;
+static struct nova_frame_ticket forged_stack;
+static bool owned_stack_alloc(void *ctx,uint64_t owner,void **frame,
+                              uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation||stack_budget==0)return false;
+    struct nova_frame_ticket ticket={0};
+    if(!nova_page_alloc_owned_ticket(NOVA_FRAME_STACK,owner,&ticket))return false;
+    if(stack_budget!=UINT32_MAX)stack_budget--;
+    *frame=ticket.frame;*generation=ticket.generation;return true;
+}
+static bool owned_stack_phys(void *ctx,uint64_t owner,const void *frame,
+                             uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=(void *)frame,.generation=generation,
+        .role=NOVA_FRAME_STACK,.owner=owner};
+    return nova_pmm_physical_ticket(&ticket,out);
+}
+static bool owned_stack_free(void *ctx,uint64_t owner,void *frame,
+                             uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=frame,.generation=generation,
+        .role=NOVA_FRAME_STACK,.owner=owner};
+    return nova_page_free_ticket(&ticket);
+}
+static bool forged_owned_stack_alloc(void *ctx,uint64_t owner,void **frame,
+                                     uint64_t *generation){
+    if(!owned_stack_alloc(ctx,owner,frame,generation))return false;
+    forged_stack=(struct nova_frame_ticket){
+        .frame=*frame,.generation=*generation,
+        .role=NOVA_FRAME_STACK,.owner=owner};
+    memset(*frame,0xA7,4096);
+    (*generation)++;
+    return true;
+}
 static const struct nova_pt_ops ops={
     .allocate=table_alloc,.release=table_free,.physical_address=legacy_phys,
     .image_ticket_physical_address=phys_owned,
     .table_physical_address=table_phys,
     .table_owned_ticket_allocate=owned_table_alloc,
     .table_owned_ticket_physical_address=owned_table_phys,
-    .table_owned_ticket_release=owned_table_free
+    .table_owned_ticket_release=owned_table_free,
+    .stack_owned_ticket_allocate=owned_stack_alloc,
+    .stack_owned_ticket_physical_address=owned_stack_phys,
+    .stack_owned_ticket_release=owned_stack_free
 };
 static void test_separation_and_offline_preflight(void){
     setup();
@@ -300,6 +340,110 @@ static void test_stale_owned_table_ticket(void){
     assert(nova_owner_retire(owner));
     assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
 }
+static void test_owned_stack_lifecycle(void){
+    setup();stack_budget=UINT32_MAX;
+    uint64_t a=0,b=0;
+    assert(nova_owner_create(&a)&&nova_owner_create(&b));
+    struct nova_process_table table={0};
+    uint32_t pa=0,pb=0;
+    assert(stage(&table,a,&pa)==NOVA_PROCESS_OK);
+    assert(stage(&table,b,&pb)==NOVA_PROCESS_OK);
+    struct nova_process_image *ia=nova_process_find(&table,pa);
+    struct nova_process_image *ib=nova_process_find(&table,pb);
+    assert(ia&&ib);
+    struct nova_user_space sa={0},sb={0};
+    struct nova_pt_ops missing=ops;
+    missing.stack_owned_ticket_release=NULL;
+    assert(nova_user_space_prepare(&sa,&missing,ia)==NOVA_PT_INVALID);
+    assert(sa.stack_count==0 && !sa.prepared);
+    assert(nova_user_space_prepare(&sa,&ops,ia)==NOVA_PT_OK);
+    assert(nova_user_space_prepare(&sb,&ops,ib)==NOVA_PT_OK);
+    assert(nova_user_stack_guard_is_unmapped(&sa));
+    assert(nova_user_space_frames_releasable(&sa,&ops));
+    for(uint32_t i=0;i<sa.stack_count;i++){
+        struct nova_frame_ticket ticket={
+            .frame=sa.stack_frames[i],.generation=sa.stack_generation[i],
+            .role=NOVA_FRAME_STACK,.owner=a};
+        assert(nova_pmm_ticket_valid(&ticket));
+        assert(!nova_page_free_role(ticket.frame,NOVA_FRAME_STACK));
+        ticket.owner=b;
+        assert(!nova_pmm_ticket_valid(&ticket));
+        assert(!nova_page_free_ticket(&ticket));
+    }
+    sa.stack_generation[0]++;
+    assert(!nova_user_space_frames_releasable(&sa,&ops));
+    sa.stack_generation[0]--;
+    sa.page_tables.owner=b;
+    assert(!nova_user_space_frames_releasable(&sa,&ops));
+    sa.page_tables.owner=a;
+    assert(nova_user_space_frames_releasable(&sa,&ops));
+    memset(sb.stack_frames[0],0xC7,4096);
+    nova_user_space_destroy(&sa,&ops);
+    assert(nova_process_drop_guarded(&table,pa,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(a));
+    intact(sb.stack_frames[0],0xC7);
+    nova_user_space_destroy(&sb,&ops);
+    assert(nova_process_drop_guarded(&table,pb,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(b));
+    assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
+}
+static void test_owned_stack_rollback_and_forgery(void){
+    setup();stack_budget=UINT32_MAX;
+    uint64_t owner=0;assert(nova_owner_create(&owner));
+    struct nova_process_table table={0};uint32_t pid=0;
+    assert(stage(&table,owner,&pid)==NOVA_PROCESS_OK);
+    struct nova_process_image *image=nova_process_find(&table,pid);
+    assert(image);
+    struct nova_user_space space={0};
+    stack_budget=2;
+    assert(nova_user_space_prepare(&space,&ops,image)==NOVA_PT_OUT_OF_MEMORY);
+    assert(nova_pmm.in_use==image->page_count);
+    stack_budget=UINT32_MAX;
+    struct nova_pt_ops forged=ops;
+    forged.stack_owned_ticket_allocate=forged_owned_stack_alloc;
+    assert(nova_user_space_prepare(&space,&forged,image)==NOVA_PT_BAD_FRAME);
+    assert(!space.prepared && space.stack_count==0);
+    assert(nova_pmm_ticket_valid(&forged_stack));
+    intact(forged_stack.frame,0xA7);
+    assert(nova_page_free_ticket(&forged_stack));
+    assert(nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(owner));
+    assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
+}
+static void test_stale_owned_stack_ticket(void){
+    setup();stack_budget=UINT32_MAX;
+    uint64_t owner=0;assert(nova_owner_create(&owner));
+    struct nova_process_table table={0};uint32_t pid=0;
+    assert(stage(&table,owner,&pid)==NOVA_PROCESS_OK);
+    struct nova_process_image *image=nova_process_find(&table,pid);
+    assert(image);
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&ops,image)==NOVA_PT_OK);
+    struct nova_user_space saved=space;
+    struct nova_frame_ticket old={
+        .frame=space.stack_frames[0],.generation=space.stack_generation[0],
+        .role=NOVA_FRAME_STACK,.owner=owner};
+    assert(nova_page_free_ticket(&old));
+    struct nova_frame_ticket replacement={0};
+    assert(nova_page_alloc_owned_ticket(NOVA_FRAME_STACK,owner,&replacement));
+    assert(replacement.frame==old.frame && replacement.generation!=old.generation);
+    memset(replacement.frame,0xC7,4096);
+    const uint32_t before=nova_pmm.in_use;
+    assert(!nova_user_space_frames_releasable(&space,&ops));
+    nova_user_space_destroy(&space,&ops);
+    assert(nova_pmm.in_use==before);
+    intact(replacement.frame,0xC7);
+    for(uint16_t i=0;i<saved.page_tables.tables_used;i++)
+        assert(owned_table_free(NULL,owner,saved.page_tables.tables[i],
+                                saved.page_tables.table_generation[i]));
+    for(uint32_t i=1;i<saved.stack_count;i++)
+        assert(owned_stack_free(NULL,owner,saved.stack_frames[i],
+                                saved.stack_generation[i]));
+    assert(nova_page_free_ticket(&replacement));
+    assert(nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(owner));
+    assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
+}
 int main(void){
     assert(strcmp(nova_elf_result_name(NOVA_ELF_OK),
                   "VALID STATIC ELF64 (NOT EXECUTED)")==0);
@@ -308,6 +452,9 @@ int main(void){
     test_stale_owned_ticket();
     test_owned_table_rollback_and_forgery();
     test_stale_owned_table_ticket();
+    test_owned_stack_lifecycle();
+    test_owned_stack_rollback_and_forgery();
+    test_stale_owned_stack_ticket();
     puts("Owned offline ELF and page tables: owner isolation, rollback, forged and stale tickets OK.");
     return 0;
 }

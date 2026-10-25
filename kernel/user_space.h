@@ -68,7 +68,12 @@ static inline bool nova_user_space_frames_releasable(
     const struct nova_user_space *space,const struct nova_pt_ops *ops){
     if(!space||!nova_pt_tables_releasable(&space->page_tables,ops)||
        space->stack_count>NOVA_USER_STACK_PAGES)return false;
-    if(space->stack_guarded &&
+    const uint64_t owner=space->page_tables.owner;
+    if(owner && (!space->stack_guarded||
+       !ops->stack_owned_ticket_allocate||
+       !ops->stack_owned_ticket_physical_address||
+       !ops->stack_owned_ticket_release))return false;
+    if(!owner && space->stack_guarded &&
        (!ops->stack_ticket_allocate||!ops->stack_ticket_physical_address||
         !ops->stack_ticket_release))return false;
     const struct nova_page_table *tree=&space->page_tables;
@@ -77,12 +82,16 @@ static inline bool nova_user_space_frames_releasable(
         uint64_t phys=0;
         if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
            !nova_pt_valid_phys(space->stack_physical[i])||
-           (space->stack_guarded ?
-              (!space->stack_generation[i] ||
-               !ops->stack_ticket_physical_address(ops->context,frame,
-                   space->stack_generation[i],&phys)) :
-              (space->stack_generation[i]!=0 ||
-               !nova_user_stack_physical(ops)(ops->context,frame,&phys))) ||
+           (owner ?
+               (!space->stack_generation[i] ||
+                !ops->stack_owned_ticket_physical_address(ops->context,owner,
+                    frame,space->stack_generation[i],&phys)) :
+             space->stack_guarded ?
+               (!space->stack_generation[i] ||
+                !ops->stack_ticket_physical_address(ops->context,frame,
+                    space->stack_generation[i],&phys)) :
+               (space->stack_generation[i]!=0 ||
+                !nova_user_stack_physical(ops)(ops->context,frame,&phys))) ||
            phys!=space->stack_physical[i])return false;
         for(uint32_t j=0;j<i;j++)
             if(frame==space->stack_frames[j]||
@@ -100,10 +109,14 @@ static inline void nova_user_space_destroy(struct nova_user_space *space,
                                             const struct nova_pt_ops *ops){
     if(!space)return;
     if(nova_user_space_frames_releasable(space,ops)){
-        /* Remove page-table references before releasing stack frames. */
+        /* Capture owner before nova_pt_destroy clears the descriptor. */
+        const uint64_t owner=space->page_tables.owner;
         nova_pt_destroy(&space->page_tables,ops);
         for(uint32_t i=0;i<space->stack_count;i++){
-            if(space->stack_guarded)
+            if(owner)
+                (void)ops->stack_owned_ticket_release(ops->context,owner,
+                    space->stack_frames[i],space->stack_generation[i]);
+            else if(space->stack_guarded)
                 (void)ops->stack_ticket_release(ops->context,
                     space->stack_frames[i],space->stack_generation[i]);
             else
@@ -126,11 +139,15 @@ static inline enum nova_pt_result nova_user_space_prepare(
     const bool guarded=ops->stack_ticket_allocate||
                        ops->stack_ticket_physical_address||
                        ops->stack_ticket_release;
-    if(guarded && (!ops->stack_ticket_allocate||
-                   !ops->stack_ticket_physical_address||
-                   !ops->stack_ticket_release))return NOVA_PT_INVALID;
+    if(image->owner){
+        if(!ops->stack_owned_ticket_allocate||
+           !ops->stack_owned_ticket_physical_address||
+           !ops->stack_owned_ticket_release)return NOVA_PT_INVALID;
+    }else if(guarded && (!ops->stack_ticket_allocate||
+                          !ops->stack_ticket_physical_address||
+                          !ops->stack_ticket_release))return NOVA_PT_INVALID;
     *space=(struct nova_user_space){0};
-    space->stack_guarded=guarded;
+    space->stack_guarded=guarded || image->owner!=0;
     enum nova_pt_result result=nova_pt_prepare(&space->page_tables,ops,image);
     if(result!=NOVA_PT_OK)return result;
     space->guard_base=NOVA_USER_STACK_GUARD;
@@ -141,17 +158,22 @@ static inline enum nova_pt_result nova_user_space_prepare(
     for(uint32_t i=0;i<NOVA_USER_STACK_PAGES;i++){
         void *frame=NULL;
         uint64_t generation=0;
-        if(guarded){
-            if(!ops->stack_ticket_allocate(ops->context,&frame,&generation)){
+        if(image->owner){
+            if(!ops->stack_owned_ticket_allocate(ops->context,image->owner,
+                                                &frame,&generation)){
                 result=NOVA_PT_OUT_OF_MEMORY;goto rollback;
             }
-            /* A forged/empty ticket must never authorize zeroing or free. */
-            if(!frame||!generation){
-                result=NOVA_PT_BAD_FRAME;goto rollback;
+        }else if(guarded){
+            if(!ops->stack_ticket_allocate(ops->context,&frame,&generation)){
+                result=NOVA_PT_OUT_OF_MEMORY;goto rollback;
             }
         }else{
             frame=nova_user_stack_alloc(ops)(ops->context);
             if(!frame){result=NOVA_PT_OUT_OF_MEMORY;goto rollback;}
+        }
+        /* Invalid tickets must not authorize zeroing or cleanup. */
+        if(space->stack_guarded && (!frame||!generation)){
+            result=NOVA_PT_BAD_FRAME;goto rollback;
         }
         /* Do NOT register or free a suspect frame before checking it.
          * A broken allocator may return an image frame, an existing table,
@@ -170,10 +192,13 @@ static inline enum nova_pt_result nova_user_space_prepare(
                 result=NOVA_PT_BAD_FRAME;goto rollback;
             }
         uint64_t phys=0;
-        if(!(guarded ?
-             ops->stack_ticket_physical_address(ops->context,frame,
-                                                  generation,&phys) :
-             nova_user_stack_physical(ops)(ops->context,frame,&phys)) ||
+        if(!(image->owner ?
+              ops->stack_owned_ticket_physical_address(ops->context,image->owner,
+                                                       frame,generation,&phys) :
+              guarded ?
+              ops->stack_ticket_physical_address(ops->context,frame,
+                                                   generation,&phys) :
+              nova_user_stack_physical(ops)(ops->context,frame,&phys)) ||
            !nova_pt_valid_phys(phys) ||
            ((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0){
             /* Unknown ownership: do not free an unverified frame. */
