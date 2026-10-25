@@ -861,6 +861,16 @@ static bool nova_retire_owner_callback(void *ctx,uint64_t owner){
     (void)ctx;
     return nova_owner_retire(owner);
 }
+static bool nova_retry_pending_stage_rollbacks(void){
+    for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
+        if(!nova_processes.slots[i].rollback_pending)continue;
+        if(!nova_process_retry_stage_rollback(
+               &nova_processes,i,NULL,nova_process_page_phys,
+               &nova_image_guard_ops,nova_retire_owner_callback,NULL))
+            return false;
+    }
+    return true;
+}
 /* One guarded teardown path for PDROP and setup rollback. Never retire an
  * owner while stack/table frames remain, and retain a retryable tombstone if
  * retirement fails after the last image frame was released. */
@@ -1064,6 +1074,8 @@ static void shell_execute(void){
         uint32_t file_size=0;bool read_only=false;
         if(!nova_vfs_size(&nova_vfs_state,path,&file_size,&read_only))
             shell_result("PROGRAM FILE NOT FOUND");
+        else if(!nova_retry_pending_stage_rollbacks())
+            shell_result("PSTAGE ROLLBACK PENDING; RETRY PSTAGE");
         else{
             struct nova_elf_path source={.vfs=&nova_vfs_state,.path=path};
             uint32_t pid=0;
@@ -1103,7 +1115,8 @@ static void shell_execute(void){
                     else shell_result(nova_pt_status_name(mapped));
                 }
             }else{
-                (void)nova_owner_retire(owner);
+                if(status!=NOVA_PROCESS_ROLLBACK_PENDING)
+                    (void)nova_owner_retire(owner);
                 shell_result(nova_process_result_name(status));
             }
             }
