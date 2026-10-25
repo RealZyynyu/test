@@ -22,6 +22,7 @@
 #include "paging.h"
 #include "user_space.h"
 #include "game_input.h"
+#include "capabilities.h"
 
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t requests_start[] = LIMINE_REQUESTS_START_MARKER;
@@ -165,6 +166,7 @@ static bool nova_pmm_test_ok=false;
 static struct nova_fat16 nova_disk_fat16;
 static struct nova_vfs nova_vfs_state={.disk=&nova_disk_fat16};
 static struct nova_process_table nova_processes;
+static struct nova_cap_registry nova_app_policy;
 /* OFFLINE: never activated via CR3. Missing all kernel mappings. */
 static struct nova_user_space nova_user_spaces[NOVA_PROCESS_SLOTS];
 
@@ -485,7 +487,7 @@ static void app_content(void){
         text(417,413,shell_output[2],1,0xE3EDF9);
         text(418,477,">",2,0x6FE7AC);
         text(446,477,shell_input,2,0xE1EEFA);
-        text(406,608,"PSTAGE  PTINFO  PSTACK  PDROP  (NOT EXECUTED)",1,secondary);
+        text(406,608,"PSTAGE  PACCESS  PDROP  -  NO APP EXECUTION",1,secondary);
         if(nova_file_equal(shell_output[2],"RAM DETECTED (MIB):"))number(645,412,(unsigned)usable_memory_mb,1,0xA5E4B9);
     }
 }
@@ -670,7 +672,7 @@ static uint32_t nova_pid_parse(const char *str){
 
 static void shell_execute(void){
     if(nova_file_equal(shell_input,"HELP"))
-        shell_result("PSTAGE PLIST PINFO PTINFO PSTACK PDROP ELFCHK");
+        shell_result("PSTAGE PLIST PINFO PSTACK PACCESS PDROP ELFCHK");
     else if(nova_file_equal(shell_input,"LS")){
         char list[100]="";
         for(size_t i=0;i<NOVA_FILE_COUNT;i++){
@@ -856,9 +858,18 @@ static void shell_execute(void){
                 size_t slot=nova_process_index(img);
                 enum nova_pt_result mapped=nova_user_space_prepare(
                     &nova_user_spaces[slot],&nova_user_pt_ops,img);
-                if(mapped==NOVA_PT_OK)
-                    nova_show_metric("IMAGE+STACK STAGED PID=",pid,NULL,0);
-                else{
+                if(mapped==NOVA_PT_OK){
+                    /* All new staged images are registered with ZERO rights.
+                     * No app-visible grant command exists in this kernel. */
+                    if(nova_cap_register(&nova_app_policy,&nova_processes,pid))
+                        nova_show_metric("IMAGE STAGED, NO RIGHTS PID=",pid,NULL,0);
+                    else{
+                        nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
+                        (void)nova_process_drop(&nova_processes,pid,
+                            nova_process_page_release,NULL);
+                        shell_result("CAPABILITY REGISTRY FULL");
+                    }
+                }else{
                     /* Both stack and table frames roll back on any failure. */
                     nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
                     (void)nova_process_drop(&nova_processes,pid,
@@ -904,6 +915,16 @@ static void shell_execute(void){
             else shell_result("USER STACK PREPARATION INVALID");
         }
     }
+    else if(shell_input[0]=='P'&&shell_input[1]=='A'&&
+            shell_input[2]=='C'&&shell_input[3]=='C'&&
+            shell_input[4]=='E'&&shell_input[5]=='S'&&
+            shell_input[6]=='S'&&shell_input[7]==' '){
+        uint32_t pid=nova_pid_parse(shell_input+8);
+        if(!nova_process_find(&nova_processes,pid))
+            shell_result("STAGED IMAGE NOT FOUND");
+        else nova_show_metric("GRANTED RIGHTS (BITMASK)=",
+             nova_cap_current(&nova_app_policy,&nova_processes,pid),NULL,0);
+    }
     else if(shell_input[0]=='P'&&shell_input[1]=='D'&&
             shell_input[2]=='R'&&shell_input[3]=='O'&&
             shell_input[4]=='P'&&shell_input[5]==' '){
@@ -912,6 +933,8 @@ static void shell_execute(void){
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
         else{
             size_t slot=nova_process_index(p);
+            /* Clear all application rights before freeing its memory. */
+            (void)nova_cap_unregister(&nova_app_policy,pid);
             nova_user_space_destroy(&nova_user_spaces[slot],&nova_user_pt_ops);
             bool ok=nova_process_drop(&nova_processes,pid,
                 nova_process_page_release,NULL);
@@ -1151,6 +1174,7 @@ void kmain(void){
     serial_log("NOVA_PROCESS_IMAGE_TABLE_READY\n");
     serial_log("NOVA_OFFLINE_PAGING_PREPARER_READY\n");
     serial_log("NOVA_OFFLINE_GUARDED_STACK_READY\n");
+    serial_log("NOVA_APP_CAPABILITIES_DEFAULT_DENY\n");
     if(nova_interrupts_init()){
         serial_log("NOVA_IDT_PIT_READY\n");
         // Exercise the IDT + IRQ0 stub synchronously before real IRQs are enabled.
