@@ -51,7 +51,8 @@ class TestNativeSafetyDefaults(unittest.TestCase):
         app = self.text("kernel/main.c")
         self.assertIn("OFFLINE", paging)
         self.assertIn("NOT runnable processes", process)
-        self.assertIn("nova_pt_prepare", app)
+        self.assertIn("nova_user_space_prepare", app)
+        self.assertIn("nova_pt_prepare", self.text("kernel/user_space.h"))
         # No x86-64 page-table activation or ring-3 transitions are permitted yet.
         self.assertNotRegex(
             app + paging + process,
