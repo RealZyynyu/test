@@ -44,15 +44,43 @@ static inline bool nova_user_stack_range_valid(const struct nova_process_image *
     }
     return true;
 }
+/* Verify both ownership sets BEFORE the first release. On any
+ * inconsistent count, pointer or physical alias, free nothing: a bounded
+ * memory leak is safer than corrupting someone else's process image.
+ * This check relies on a trustworthy physical-address callback.
+ */
+static inline bool nova_user_space_frames_releasable(
+    const struct nova_user_space *space,const struct nova_pt_ops *ops){
+    if(!space||!nova_pt_tables_releasable(&space->page_tables,ops)||
+       space->stack_count>NOVA_USER_STACK_PAGES)return false;
+    const struct nova_page_table *tree=&space->page_tables;
+    for(uint32_t i=0;i<space->stack_count;i++){
+        void *frame=space->stack_frames[i];
+        uint64_t phys=0;
+        if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
+           !nova_pt_valid_phys(space->stack_physical[i])||
+           !ops->physical_address(ops->context,frame,&phys)||
+           phys!=space->stack_physical[i])return false;
+        for(uint32_t j=0;j<i;j++)
+            if(frame==space->stack_frames[j]||
+               phys==space->stack_physical[j])return false;
+        for(uint16_t j=0;j<tree->protected_count;j++)
+            if(frame==tree->protected_frames[j]||
+               phys==tree->protected_physical[j])return false;
+        for(uint16_t j=0;j<tree->tables_used;j++)
+            if(frame==tree->tables[j]||
+               phys==tree->table_physical[j])return false;
+    }
+    return true;
+}
 static inline void nova_user_space_destroy(struct nova_user_space *space,
                                             const struct nova_pt_ops *ops){
     if(!space)return;
-    /* Remove page-table references before releasing stack frames. */
-    nova_pt_destroy(&space->page_tables,ops);
-    if(ops && ops->release){
+    if(nova_user_space_frames_releasable(space,ops)){
+        /* Remove page-table references before releasing stack frames. */
+        nova_pt_destroy(&space->page_tables,ops);
         for(uint32_t i=0;i<space->stack_count;i++)
-            if(space->stack_frames[i])
-                ops->release(ops->context,space->stack_frames[i]);
+            ops->release(ops->context,space->stack_frames[i]);
     }
     *space=(struct nova_user_space){0};
 }
