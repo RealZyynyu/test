@@ -34,6 +34,7 @@ struct nova_user_space {
     uint64_t initial_rsp;
     uint64_t guard_base;
     bool prepared;
+    bool teardown_started; /* failed releases retain tickets for retry */
 };
 /* Role-specific stack callbacks are optional for synthetic host allocators,
  * but the native kernel supplies all three to keep stack/table/image frames
@@ -105,32 +106,46 @@ static inline bool nova_user_space_frames_releasable(
     }
     return true;
 }
-static inline void nova_user_space_destroy(struct nova_user_space *space,
+static inline bool nova_user_space_destroy(struct nova_user_space *space,
                                             const struct nova_pt_ops *ops){
-    if(!space)return;
-    if(nova_user_space_frames_releasable(space,ops)){
-        /* Capture owner before nova_pt_destroy clears the descriptor. */
-        const uint64_t owner=space->page_tables.owner;
-        nova_pt_destroy(&space->page_tables,ops);
-        for(uint32_t i=0;i<space->stack_count;i++){
-            if(owner)
-                (void)ops->stack_owned_ticket_release(ops->context,owner,
-                    space->stack_frames[i],space->stack_generation[i]);
-            else if(space->stack_guarded)
-                (void)ops->stack_ticket_release(ops->context,
-                    space->stack_frames[i],space->stack_generation[i]);
-            else
-                nova_user_stack_release(ops)(ops->context,space->stack_frames[i]);
-        }
+    if(!space||!ops)return false;
+    if(!space->teardown_started){
+        if(!nova_user_space_frames_releasable(space,ops))return false;
+        space->teardown_started=true;
+        space->prepared=false;
+        /* No query or mapping may use a tree once any leaf release starts. */
+        space->page_tables.teardown_started=true;
+        space->page_tables.prepared=false;
+    }else if(!nova_user_space_frames_releasable(space,ops))return false;
+    const uint64_t owner=space->page_tables.owner;
+    while(space->stack_count){
+        uint32_t i=space->stack_count-1u;
+        bool released=true;
+        if(owner)
+            released=ops->stack_owned_ticket_release(ops->context,owner,
+                space->stack_frames[i],space->stack_generation[i]);
+        else if(space->stack_guarded)
+            released=ops->stack_ticket_release(ops->context,
+                space->stack_frames[i],space->stack_generation[i]);
+        else
+            nova_user_stack_release(ops)(ops->context,space->stack_frames[i]);
+        if(!released)return false;
+        space->stack_frames[i]=NULL;
+        space->stack_physical[i]=0;
+        space->stack_generation[i]=0;
+        space->stack_count--;
     }
+    if(!nova_pt_destroy(&space->page_tables,ops))return false;
     *space=(struct nova_user_space){0};
+    return true;
 }
 static inline enum nova_pt_result nova_user_space_prepare(
     struct nova_user_space *space,const struct nova_pt_ops *ops,
     const struct nova_process_image *image){
     if(!space||!ops||!ops->allocate||!ops->release||
        !ops->physical_address||!nova_user_stack_range_valid(image)||
-       space->prepared||space->stack_count||space->page_tables.tables_used)
+       space->prepared||space->teardown_started||space->stack_count||
+       space->page_tables.tables_used||space->page_tables.teardown_started)
         return NOVA_PT_INVALID;
     if((ops->stack_allocate||ops->stack_release||
         ops->stack_physical_address) &&
@@ -271,6 +286,28 @@ static inline bool nova_user_stack_guard_is_unmapped(
 
 /* PDROP preflight: validate every owned frame and mapping before revoking
  * permissions or releasing anything. This is OFFLINE only, not ring 3. */
+static inline bool nova_user_space_is_empty(const struct nova_user_space *space){
+    if(!space||space->prepared||space->teardown_started||space->stack_count||
+       space->stack_guarded||space->stack_top||space->initial_rsp||space->guard_base)
+        return false;
+    const struct nova_page_table *tree=&space->page_tables;
+    if(tree->prepared||tree->teardown_started||tree->root_physical||
+       tree->tables_used||tree->mapped_pages||tree->protected_count||
+       tree->pending_leaf_frame||tree->pending_leaf_physical||tree->owner||
+       tree->tables_guarded)return false;
+    for(uint32_t i=0;i<NOVA_USER_STACK_PAGES;i++)
+        if(space->stack_frames[i]||space->stack_physical[i]||
+           space->stack_generation[i])return false;
+    for(uint16_t i=0;i<NOVA_PT_MAX_TABLES;i++)
+        if(tree->tables[i]||tree->table_physical[i]||tree->table_generation[i])
+            return false;
+    for(uint16_t i=0;i<NOVA_PROCESS_MAX_PAGES;i++)
+        if(tree->protected_frames[i]||tree->protected_physical[i])return false;
+    for(uint16_t i=0;i<NOVA_PT_MAX_MAPPED_PAGES;i++)
+        if(tree->mapped_physical[i]||tree->mapped_virtual[i]||tree->mapped_entry[i])
+            return false;
+    return true;
+}
 static inline bool nova_offline_drop_preflight(
     const struct nova_process_image *image,
     const struct nova_process_table *processes,
@@ -278,14 +315,19 @@ static inline bool nova_offline_drop_preflight(
     nova_process_phys_fn physical,
     const struct nova_process_guard_ops *guard,void *context){
     if(!image||!image->staged||!image->guarded||!image->owner||
-       !processes||!space||!space->prepared||!space->page_tables.prepared||
+       !processes||!space||image->page_count==0||
+       image->page_count>NOVA_PROCESS_MAX_PAGES||
+       !nova_process_frames_releasable_guarded(
+           image,processes,physical,context,guard))return false;
+    /* An image may be staged before address-space preparation, or image-frame
+     * release may be retried after its address space was fully destroyed. */
+    if(nova_user_space_is_empty(space))return true;
+    if(!space->prepared||space->teardown_started||
+       !space->page_tables.prepared||space->page_tables.teardown_started||
        space->page_tables.owner!=image->owner||
-       image->page_count==0||image->page_count>NOVA_PROCESS_MAX_PAGES||
        space->page_tables.protected_count!=image->page_count||
        space->page_tables.mapped_pages!=
            (uint32_t)image->page_count+NOVA_USER_STACK_PAGES||
-       !nova_process_frames_releasable_guarded(
-           image,processes,physical,context,guard)||
        !nova_user_space_frames_releasable(space,ops)||
        !nova_user_stack_guard_is_unmapped(space))return false;
     for(uint16_t i=0;i<image->page_count;i++){
