@@ -726,6 +726,37 @@ static bool nova_table_ticket_release(void *ctx,void *frame,
     };
     return nova_page_free_ticket(&ticket);
 }
+/* Owner-aware table callbacks are required for every owned staged image.
+ * The PMM validates owner + role + original generation on every access. */
+static bool nova_table_owned_ticket_allocate(void *ctx,uint64_t owner,
+                                             void **frame,uint64_t *generation){
+    (void)ctx;
+    if(!frame||!generation)return false;
+    *frame=NULL;*generation=0;
+    struct nova_frame_ticket ticket={0};
+    if(!nova_page_alloc_owned_ticket(NOVA_FRAME_PAGE_TABLE,owner,&ticket))
+        return false;
+    *frame=ticket.frame;*generation=ticket.generation;
+    return true;
+}
+static bool nova_table_owned_ticket_physical(void *ctx,uint64_t owner,
+        const void *frame,uint64_t generation,uint64_t *out){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=(void *)frame,.generation=generation,
+        .role=NOVA_FRAME_PAGE_TABLE,.owner=owner
+    };
+    return nova_pmm_physical_ticket(&ticket,out);
+}
+static bool nova_table_owned_ticket_release(void *ctx,uint64_t owner,
+                                           void *frame,uint64_t generation){
+    (void)ctx;
+    struct nova_frame_ticket ticket={
+        .frame=frame,.generation=generation,
+        .role=NOVA_FRAME_PAGE_TABLE,.owner=owner
+    };
+    return nova_page_free_ticket(&ticket);
+}
 static void *nova_stack_page_allocate(void *ctx){
     (void)ctx;return nova_page_alloc_role(NOVA_FRAME_STACK);
 }
@@ -771,6 +802,9 @@ static const struct nova_pt_ops nova_user_pt_ops={
     .table_ticket_allocate=nova_table_ticket_allocate,
     .table_ticket_physical_address=nova_table_ticket_physical,
     .table_ticket_release=nova_table_ticket_release,
+    .table_owned_ticket_allocate=nova_table_owned_ticket_allocate,
+    .table_owned_ticket_physical_address=nova_table_owned_ticket_physical,
+    .table_owned_ticket_release=nova_table_owned_ticket_release,
     .stack_allocate=nova_stack_page_allocate,
     .stack_release=nova_stack_page_release,
     .stack_physical_address=nova_stack_page_phys,
