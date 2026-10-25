@@ -282,8 +282,6 @@ static inline bool nova_process_drop_guarded(
     return nova_process_release_image_impl(
         image,table,NULL,physical,ctx,guard);
 }
-/* Before zeroing/copying a candidate frame, reject pointer and physical
- * aliases against the current image and all staged foreign images. */
 static inline bool nova_process_owner_tombstone_valid(
     const struct nova_process_image *image){
     if(!image||!image->staged||!image->guarded||
@@ -327,6 +325,8 @@ static inline bool nova_process_drop_owned_guarded(
     }
     return true;
 }
+/* Before zeroing/copying a candidate frame, reject pointer and physical
+ * aliases against the current image and all staged foreign images. */
 static inline bool nova_process_frame_available_owned(
     const struct nova_process_table *table,
     const struct nova_process_image *current,const void *frame,
