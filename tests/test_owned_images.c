@@ -15,6 +15,9 @@ static uint8_t elf[ELF_BYTES];
 static bool fail_second_read;
 static unsigned budget;
 static unsigned table_budget;
+static int fail_image_free_after=-1;
+static int fail_table_free_after=-1;
+static int fail_stack_free_after=-1;
 static struct nova_frame_ticket forged_table;
 static void w16(size_t i,uint16_t x){elf[i]=(uint8_t)x;elf[i+1]=(uint8_t)(x>>8);}
 static void w32(size_t i,uint32_t x){
@@ -51,6 +54,7 @@ static void setup(void){
         elf[8192+i]=(uint8_t)(0x80u+i);
     }
     fail_second_read=false;budget=UINT32_MAX;table_budget=UINT32_MAX;
+    fail_image_free_after=-1;fail_table_free_after=-1;fail_stack_free_after=-1;
     forged_table=(struct nova_frame_ticket){0};
 }
 static bool read_elf(void *ctx,uint64_t off,uint8_t *out,size_t n){
@@ -76,6 +80,8 @@ static bool phys_owned(void *ctx,uint64_t owner,const void *frame,
 }
 static bool free_owned(void *ctx,uint64_t owner,void *frame,uint64_t gen){
     (void)ctx;
+    if(fail_image_free_after==0){fail_image_free_after=-1;return false;}
+    if(fail_image_free_after>0)fail_image_free_after--;
     struct nova_frame_ticket t={
         .frame=frame,.generation=gen,.role=NOVA_FRAME_IMAGE,.owner=owner};
     return nova_page_free_ticket(&t);
@@ -125,6 +131,8 @@ static bool owned_table_phys(void *ctx,uint64_t owner,const void *frame,
 static bool owned_table_free(void *ctx,uint64_t owner,void *frame,
                              uint64_t generation){
     (void)ctx;
+    if(fail_table_free_after==0){fail_table_free_after=-1;return false;}
+    if(fail_table_free_after>0)fail_table_free_after--;
     struct nova_frame_ticket ticket={
         .frame=frame,.generation=generation,
         .role=NOVA_FRAME_PAGE_TABLE,.owner=owner};
@@ -162,6 +170,8 @@ static bool owned_stack_phys(void *ctx,uint64_t owner,const void *frame,
 static bool owned_stack_free(void *ctx,uint64_t owner,void *frame,
                              uint64_t generation){
     (void)ctx;
+    if(fail_stack_free_after==0){fail_stack_free_after=-1;return false;}
+    if(fail_stack_free_after>0)fail_stack_free_after--;
     struct nova_frame_ticket ticket={
         .frame=frame,.generation=generation,
         .role=NOVA_FRAME_STACK,.owner=owner};
@@ -281,9 +291,14 @@ static void test_stale_owned_ticket(void){
     assert(replacement.frame==old.frame);
     memset(replacement.frame,0xC7,4096);
     assert(!nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(im->staged&&im->page_count==2); /* failed preflight retains tickets */
     intact(replacement.frame,0xC7);
-    assert(!nova_owner_retire(owner)); /* leaked second frame remains owned */
+    assert(!nova_owner_retire(owner));
     assert(nova_page_free_ticket(&replacement));
+    assert(free_owned(NULL,owner,im->pages[1].frame,im->pages[1].generation));
+    *im=(struct nova_process_image){0}; /* page 0 was freed/reused above */
+    assert(nova_owner_retire(owner));
+    assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
 }
 static void test_owned_table_rollback_and_forgery(void){
     setup();uint64_t owner=0;assert(nova_owner_create(&owner));
@@ -328,7 +343,9 @@ static void test_stale_owned_table_ticket(void){
     memset(replacement.frame,0xC7,4096);
     const uint32_t before=nova_pmm.in_use;
     assert(!nova_pt_tables_releasable(&tree,&ops));
-    nova_pt_destroy(&tree,&ops);
+    assert(!nova_pt_destroy(&tree,&ops));
+    assert(!tree.teardown_started&&tree.prepared&&
+           tree.tables_used==saved.tables_used);
     assert(nova_pmm.in_use==before);
     intact(replacement.frame,0xC7);
     assert(!nova_owner_retire(owner));
@@ -430,7 +447,8 @@ static void test_stale_owned_stack_ticket(void){
     memset(replacement.frame,0xC7,4096);
     const uint32_t before=nova_pmm.in_use;
     assert(!nova_user_space_frames_releasable(&space,&ops));
-    nova_user_space_destroy(&space,&ops);
+    assert(!nova_user_space_destroy(&space,&ops));
+    assert(space.prepared&&!space.teardown_started);
     assert(nova_pmm.in_use==before);
     intact(replacement.frame,0xC7);
     for(uint16_t i=0;i<saved.page_tables.tables_used;i++)
@@ -498,6 +516,66 @@ static void test_offline_drop_preflight(void){
     assert(nova_owner_retire(b));
     assert(nova_pmm.in_use==0 && nova_pmm_metadata_valid());
 }
+
+/* Inject a callback failure after one successful release; remaining tickets
+ * must stay reachable and a second teardown attempt must finish cleanup. */
+static void test_retryable_image_release(void){
+    setup();uint64_t owner=0;assert(nova_owner_create(&owner));
+    struct nova_process_table table={0};uint32_t pid=0;
+    assert(stage(&table,owner,&pid)==NOVA_PROCESS_OK);
+    struct nova_process_image *image=nova_process_find(&table,pid);
+    assert(image&&image->page_count==2);
+    uint8_t *remaining=image->pages[0].frame;
+    const uint32_t before=nova_pmm.in_use;
+    fail_image_free_after=1;
+    assert(!nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(image->staged&&image->page_count==1&&image->pages[0].frame==remaining);
+    assert(nova_pmm.in_use==before-1u);
+    assert(!nova_owner_retire(owner));
+    assert(nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(!nova_process_find(&table,pid));
+    assert(nova_owner_retire(owner));
+    assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
+}
+static void test_retryable_space_teardown(void){
+    setup();stack_budget=UINT32_MAX;
+    uint64_t owner=0;assert(nova_owner_create(&owner));
+    struct nova_process_table table={0};uint32_t pid=0;
+    assert(stage(&table,owner,&pid)==NOVA_PROCESS_OK);
+    struct nova_process_image *image=nova_process_find(&table,pid);
+    assert(image);
+    struct nova_user_space space={0};
+    assert(nova_user_space_prepare(&space,&ops,image)==NOVA_PT_OK);
+    const uint32_t before=nova_pmm.in_use;
+    const uint16_t table_count=space.page_tables.tables_used;
+    fail_stack_free_after=2;
+    assert(!nova_user_space_destroy(&space,&ops));
+    assert(space.teardown_started&&!space.prepared&&space.stack_count==2);
+    assert(space.page_tables.teardown_started&&!space.page_tables.prepared);
+    assert(space.page_tables.tables_used==table_count);
+    assert(nova_pmm.in_use==before-2u);
+    assert(!nova_offline_drop_preflight(image,&table,&space,&ops,
+                                        legacy_phys,&guard,NULL));
+    fail_stack_free_after=-1;
+    fail_table_free_after=1;
+    assert(!nova_user_space_destroy(&space,&ops));
+    assert(space.teardown_started&&space.stack_count==0);
+    assert(space.page_tables.teardown_started&&!space.page_tables.prepared);
+    assert(space.page_tables.tables_used==table_count-1u);
+    assert(nova_pmm.in_use==before-5u);
+    assert(!nova_offline_drop_preflight(image,&table,&space,&ops,
+                                        legacy_phys,&guard,NULL));
+    fail_table_free_after=-1;
+    assert(nova_user_space_destroy(&space,&ops));
+    assert(nova_user_space_is_empty(&space));
+    assert(nova_pmm.in_use==image->page_count);
+    assert(nova_offline_drop_preflight(image,&table,&space,&ops,
+                                       legacy_phys,&guard,NULL));
+    assert(nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(owner));
+    assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
+}
+
 int main(void){
     assert(strcmp(nova_elf_result_name(NOVA_ELF_OK),
                   "VALID STATIC ELF64 (NOT EXECUTED)")==0);
@@ -510,6 +588,8 @@ int main(void){
     test_owned_stack_rollback_and_forgery();
     test_stale_owned_stack_ticket();
     test_offline_drop_preflight();
+    test_retryable_image_release();
+    test_retryable_space_teardown();
     puts("Owned offline ELF and page tables: owner isolation, rollback, forged and stale tickets OK.");
     return 0;
 }
