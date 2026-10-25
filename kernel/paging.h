@@ -135,13 +135,51 @@ static inline enum nova_pt_result nova_pt_new_table(
     *result=entries;*physical=phys;
     return NOVA_PT_OK;
 }
+/* Offline teardown must never trust unbounded or inconsistent ownership
+ * metadata. Check the COMPLETE table set before releasing even one frame:
+ * a partial cleanup after an alias/damaged count could double-free a staged
+ * image or a stack frame. Unknown ownership deliberately leaks memory.
+ *
+ * This is defensive bookkeeping, NOT an authenticated ownership proof:
+ * a malicious physical_address callback or simultaneous metadata tampering
+ * remains outside this prototype's trust model.
+ */
+static inline bool nova_pt_tables_releasable(
+    const struct nova_page_table *tree,const struct nova_pt_ops *ops){
+    if(!tree||!ops||!ops->release||!ops->physical_address||
+       tree->tables_used>NOVA_PT_MAX_TABLES||
+       tree->protected_count>NOVA_PROCESS_MAX_PAGES||
+       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES||
+       tree->pending_leaf_frame||tree->pending_leaf_physical)return false;
+    if(tree->tables_used &&
+       tree->root_physical!=tree->table_physical[0])return false;
+    for(uint16_t i=0;i<tree->tables_used;i++){
+        void *frame=tree->tables[i];
+        uint64_t phys=0;
+        if(!frame||((uintptr_t)frame&(NOVA_PT_PAGE_SIZE-1u))!=0||
+           !nova_pt_valid_phys(tree->table_physical[i])||
+           !ops->physical_address(ops->context,frame,&phys)||
+           phys!=tree->table_physical[i])return false;
+        for(uint16_t j=0;j<i;j++)
+            if(frame==tree->tables[j]||
+               phys==tree->table_physical[j])return false;
+        for(uint16_t j=0;j<tree->protected_count;j++)
+            if(frame==tree->protected_frames[j]||
+               phys==tree->protected_physical[j])return false;
+        for(uint16_t j=0;j<tree->mapped_pages;j++)
+            if(phys==tree->mapped_physical[j])return false;
+    }
+    return true;
+}
 static inline void nova_pt_destroy(struct nova_page_table *tree,
                                     const struct nova_pt_ops *ops){
     if(!tree)return;
-    if(ops && ops->release){
+    if(nova_pt_tables_releasable(tree,ops)){
         for(uint16_t i=0;i<tree->tables_used;i++)
-            if(tree->tables[i])ops->release(ops->context,tree->tables[i]);
+            ops->release(ops->context,tree->tables[i]);
     }
+    /* Even when ownership cannot be verified, discard the suspect tree.
+     * Retaining it could allow accidental reuse of compromised metadata. */
     *tree=(struct nova_page_table){0};
 }
 static inline enum nova_pt_result nova_pt_map_one(
