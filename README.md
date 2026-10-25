@@ -1,81 +1,86 @@
-# NOVA OS Native 0.6 — memory and device foundations
+# NOVA OS Native 0.7 — interrupt foundations
 
-NOVA Native is an independent freestanding x86-64 operating-system **kernel
-prototype**, not Debian/Linux or a macOS theme. It uses the Limine
-bootloader and paints its own macOS-inspired desktop into a framebuffer.
+NOVA Native is a freestanding, independent x86-64 OS **developer preview**
+built in C and assembly. It is not Debian, Linux or a web simulation.
+It uses the Limine bootloader and draws its own macOS-inspired desktop.
 
-## Download
+## Download and testing
 
-[NOVA Native 0.6 prerelease](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.6)
+When the automated workflow succeeds, visit the
+[NOVA Native 0.7 prerelease](https://github.com/RealZyynyu/test/releases/tag/nova-native-v0.7)
+and download `nova-os-native-x86_64.iso`.
+Release assets also include a SHA256 checksum, VM screenshot and serial log.
 
-Download `nova-os-native-x86_64.iso` for a virtual machine.
-Also provided: a boot screenshot, SHA256 checksum and serial boot logs.
-The release workflow requires QEMU serial startup and subsystem self-test
-markers; it fails if any required marker is absent.
+**Only boot this ISO in QEMU/VirtualBox.** In Windows 11 create a VM:
+64-bit guest type, BIOS/legacy boot (EFI disabled initially), 1 CPU,
+2 GB RAM, and optical drive with ISO. No virtual hard disk is required.
+If Limine reports "This CPU does not support 64-bit mode", correct
+VirtualBox's 64-bit virtual CPU support; this is not an ISO setting.
 
-## 0.6: actual kernel subsystems
+## New in 0.7
 
-- **Physical page allocator:** obtains suitable USABLE memory from the
-  Limine memory map; uses the Limine higher-half direct mapping (HHDM).
-  A bitmap guards a maximum pool of **2,048 × 4 KiB pages (8 MiB)**.
-  Allocation zero-fills pages. Free validates address/alignment, occupancy
-  and prevents double free. The boot self-test allocates two separate
-  pages, writes/reads values, frees them and verifies the counts.
-  This is NOT a virtual memory manager, heap or process isolation.
-- **Cooperative kernel jobs:** bounded round-robin runner for three
-  in-kernel callbacks (heartbeat, free page check and RAM-file health).
-  A boot self-test verifies initial dispatch. No threads, scheduler
-  interrupts, context switching, or user processes.
-- **PCI configuration enumeration:** read-only scan of PCI buses
-  0–7 with device classes (network, storage, display, USB).
-  It is a *partial hardware inventory*, not working device drivers.
-- **Terminal diagnostics:** `PMM`, `TASKS`, `PCI`, `MEM`,
-  `HELP`, `LS`, `CAT NOTES.TXT`, `CAT README.TXT`,
-  `CAT TODO.TXT`, `UNAME` and `CLEAR`.
-- Existing **PS/2 mouse and keyboard**, clickable dock and sidebar,
-  scratchpad with bounded RAM-only files, Arcade game, dark mode and
-  original macOS-inspired user interface are retained.
+- **x86-64 Interrupt Descriptor Table:** 256 kernel interrupt gates,
+  CPU exceptions routed to a fail-stop handler, and explicit
+  save/restore of integer registers in assembler IRQ stubs.
+- **Legacy PIC and PIT setup:** basic PIC remapping and PIT channel 0
+  configuration for nominal 100 Hz. This is *experimental*;
+  **hardware IRQ0 delivery was NOT confirmed** in automated QEMU runs
+  as of this release. The x86-64 IDT and IRQ handler are exercised by
+  a direct software interrupt, and boot tests check the return path.
+- **Cooperative job fallback:** three in-kernel jobs continue to run
+  using a polling fallback when hardware PIT IRQ0 is not delivered.
+  Timer-driven callbacks also work on machines where the IRQ arrives.
+- **Terminal command TICKS:** shows the count of hardware timer
+  interrupts actually observed, excluding one software test interrupt.
+  The value can remain zero depending on the virtual platform.
+- **Harder boot checks:** serial logs verify the existing physical
+  page allocator, PCI inventory, RAM files and software interrupt
+  self-test before releasing the ISO.
 
-### Testing
+### Previously implemented
+- Custom framebuffer desktop, Finder-like RAM file view, settings,
+  Arcade, Notes, original icons, Inter font rasterization
+- PS/2 keyboard and mouse input with clickable app buttons
+- Small bounded volatile RAM files (Notes changes disappear at reboot)
+- Minimal kernel-mode command interpreter
+- 4-KiB page allocator over a bounded 8-MiB Limine HHDM physical pool
+- Limited read-only PCI configuration enumeration
+- Simple cooperative kernel callbacks
 
-Boot from the ISO under QEMU or VirtualBox.
-Use a **64-bit** guest CPU (Other/Unknown 64-bit), BIOS firmware
-(UEFI off initially), 1 CPU and 2 GB RAM. No virtual hard disk required.
-The earlier VirtualBox error `This CPU does not support 64-bit mode`
-requires fixing hardware virtualization/VM guest settings on the host;
-the ISO cannot provide missing CPU features.
+### Keyboard and terminal
 
-- Press **1–6** for Welcome, Finder, Notes, Arcade, Settings, About;
-  **7** for the Terminal (while outside Notes/Terminal).
-- Press **Esc** for Home and **T** for light/dark mode outside text editors.
-- Use mouse clicks to open apps and RAM file entries.
-- Notes and the small `NOVA RAM FILES` system are stored **only in RAM**.
-  All changes disappear after reboot.
+1–6 switch main apps, 7 opens Terminal, Esc returns Home, T changes
+appearance outside text entry. Arcade: WASD or arrow keys.
+Terminal: `HELP`, `LS`, `CAT NOTES.TXT`, `UNAME`, `MEM`,
+`PMM`, `PCI`, `TASKS`, `TICKS` and `CLEAR`.
 
-### Safety and limitations
+## What is STILL MISSING
 
-**DO NOT install NOVA 0.6 over Windows 11 or on your real PC.**
-The project does not contain a safe disk installer and is unsuitable
-for normal computing. There is still **no** persistent filesystem,
-disk-write driver, networking/Wi-Fi stack, GPU acceleration, reliable
-USB support, preemptive multitasking, user-mode process isolation,
-general native-app/game runtime, update or security infrastructure.
-This OS cannot replace Windows in its current form.
+**NOVA cannot yet replace Windows 11.** There is no safe installer,
+persistent SSD/HDD filesystem, modern storage/USB/network/audio/GPU
+driver stack, user-mode app runtime, Windows game compatibility,
+complete virtual memory/address-space management, proper
+privilege separation, user processes, preemptive scheduler, security
+update system or recovery tools.
 
-The scheduler only executes callback jobs in kernel context; it is
-not a multiprocessing system. The PCI scan detects device headers
-but does not provide functional network or disk drivers.
+The IDT is a kernel-level foundation, not a production-grade
+interrupt or fault-handling subsystem. The PIT support is unverified
+for hardware IRQ delivery; the scheduler is NOT preemptive.
 
-### Sources
-`kernel/main.c` — input, graphics, serial and shell integration
-`kernel/pmm.h` — bounded physical memory allocator
-`kernel/scheduler.h` — cooperative kernel jobs
-`kernel/pci.h` — legacy read-only PCI configuration scan
-`kernel/ps2_mouse.h` — PS/2 input
-`kernel/ramfs.h` — RAM file table
-`tools/generate_font.py` — Inter font glyph generation
+**Never overwrite your Windows installation with a NOVA preview.**
 
-NOVA code is MIT-licensed. The Inter font remains OFL-1.1 licensed
-by its authors. Upstream Limine and freestanding dependencies retain
-their own licenses. No Apple trademarks or original proprietary assets
-are bundled.
+## Source and licenses
+
+`kernel/main.c`: UI and kernel integration
+`kernel/interrupts.h`: x86-64 IDT, PIC and PIT setup
+`kernel/irq.S`: x86-64 interrupt stubs
+`kernel/pmm.h`: physical page allocator
+`kernel/scheduler.h`: cooperative jobs
+`kernel/pci.h`: PCI enumeration
+`kernel/ramfs.h`: volatile RAM file table
+`kernel/ps2_mouse.h`: emulated PS/2 mouse
+`tools/generate_font.py`: open-source Inter raster font generation
+
+The original NOVA source is MIT licensed, Inter is OFL-1.1
+(https://github.com/rsms/inter), and upstream bootloader and
+freestanding components retain their own licenses.
