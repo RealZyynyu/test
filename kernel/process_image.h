@@ -214,6 +214,8 @@ static inline bool nova_process_release_image_impl(
 static inline bool nova_process_release_image(
     struct nova_process_image *image,const struct nova_process_table *table,
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx){
+    /* A legacy release must not erase the only saved generation tickets. */
+    if(image && image->guarded)return false;
     return nova_process_release_image_impl(
         image,table,free_page,physical,ctx,NULL);
 }
@@ -222,7 +224,7 @@ static inline bool nova_process_drop(
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx){
     if(!free_page||!physical)return false;
     struct nova_process_image *image=nova_process_find(table,pid);
-    if(!image)return false;
+    if(!image||image->guarded)return false;
     return nova_process_release_image_impl(
         image,table,free_page,physical,ctx,NULL);
 }
