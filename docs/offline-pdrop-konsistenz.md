@@ -31,13 +31,14 @@ GitHub-Actions-Lauf geprüft werden.
 
 ## Einschränkungen
 
-Die Vorabprüfung ist **keine atomare Transaktion**. Nachträglich
-fehlschlagende oder fehlerhafte Freigabe-Callbacks können partielle
-Freigaben und Speicherlecks verursachen. Es gibt keine SMP-Synchronisation,
-keine Ring-3-Ausführung, keine aktivierbaren Prozessadressräume und keine
-hardwareseitige Isolation. Eine kompromittierte Kernel-Komponente kann
-Metadaten verändern. Keine ISO, kein Release, keine Installation.
-`final_release` bleibt manuell gesperrt.
+Die Vorabprüfung ist **keine atomare Transaktion**. Ein regulär fehlschlagender
+Ticket-Callback lässt die nicht freigegebenen Frames samt Tickets für einen
+Wiederholungsversuch erhalten. Ein Callback, der entgegen seinem Vertrag
+`false` meldet, obwohl er den Frame freigegeben hat, oder Metadaten beschädigt,
+kann weiterhin einen nicht automatisch behebbaren Zustand erzeugen. Es gibt
+keine SMP-Synchronisation, keine Ring-3-Ausführung, keine aktivierbaren
+Prozessadressräume und keine hardwareseitige Isolation. Keine ISO, kein Release,
+keine Installation; `final_release` bleibt manuell gesperrt.
 
 ## Retrybare Freigabe
 
