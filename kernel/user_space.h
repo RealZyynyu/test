@@ -8,8 +8,9 @@
  * CR3. There is no ring 3, TSS, syscalls, interrupt return or stack switching.
  * This code only prepares and inspects data structures.
  *
- * Every failure rolls back page-table and stack allocations. ELF image
- * frames remain owned by process_image.h and are never freed here.
+ * Preparation failures attempt rollback. If a trusted release callback
+ * fails, remaining stack/table tickets stay in a retry-only descriptor.
+ * ELF image frames remain owned by process_image.h and are never freed here.
  */
 #ifndef NOVA_USER_SPACE_H
 #define NOVA_USER_SPACE_H
