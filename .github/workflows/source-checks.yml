@@ -61,7 +61,7 @@ jobs:
           test ! -f _kernel_builder/template.iso
           echo "Native NOVA kernel compiled and linked. No ISO was generated."
   elf64:
-    name: ELF64 executable validation (no execution, no ISO)
+    name: ELF64, FAT16 and app capability tests (no ISO)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
             -fsanitize=undefined -fno-sanitize-recover=all \
             tests/test_elf64.c -o /tmp/nova-elf64-test-ubsan
           /tmp/nova-elf64-test-ubsan
-      - name: Inspect ELF64 across FAT16/VFS in synthetic disk image
+      - name: Test ELF64 staging and default-deny capability policy over VFS
         run: |
           gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
             tests/test_elf_vfs.c -o /tmp/nova-elf-vfs
