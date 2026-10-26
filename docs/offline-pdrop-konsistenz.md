@@ -142,3 +142,27 @@ keine automatische Reparatur. Ein echter Kernel müsste den Zustand diagnostisch
 melden und eine vertrauenswürdige Recovery-Strategie bereitstellen. Die
 Verwaltung bleibt single-core; es entstehen keine Prozessausführung oder
 hardwareseitige Isolationsgarantien.
+
+
+## Strukturelle Prüfung ausstehender PSTAGE-Rollbacks
+
+Ein Slot mit `rollback_pending` ist kein freier Prozessslot. Vor einer neuen
+`PSTAGE`-Operation prüft `nova_process_stage_rollback_structural_valid()`
+die Deskriptorform ohne I/O oder Speicherzuteilung: Statusflags, PID,
+Entry/Segmentfelder, Label, Seitenanzahl, aktive Tickets, Generationen,
+Ausrichtung, physische Adressen und vollständig leere Listeneinträge hinter
+`page_count`. Doppelte virtuelle oder physische Seiten sowie überlappende
+Frame-Zeiger werden abgelehnt. Owner-gebundene Einträge müssen weiterhin als
+guarded markiert sein.
+
+Ist ein Pending-Deskriptor beschädigt, wird die gesamte neue Staging-Anfrage
+vor dem ELF-Lesezugriff mit `NOVA_PROCESS_NO_SLOT` abgewiesen. Der Zustand
+wird weder überschrieben noch automatisch repariert. Der eigentliche Retry
+verwendet dieselbe strukturelle Prüfung; anschließend validiert der PMM-Callback
+die tatsächliche Eigentümerrolle und Originalgeneration jedes verbleibenden
+Frames erneut.
+
+`test_retryable_stage_rollback` prüft beschädigte physische Ticketdaten,
+eine überhöhte Seitenanzahl und verunreinigte ungenutzte Einträge. In allen
+Fällen müssen PID-Zähler und PMM-Belegung unverändert bleiben. Das sind
+synthetische Host-Tests; sie belegen keine hardwareseitige Prozessisolation.
