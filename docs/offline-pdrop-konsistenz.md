@@ -117,3 +117,28 @@ Prozesssuche gefunden oder in der Anzahl aktiver Images gezählt wird, während
 der gezielte Cleanup-Pfad ihn weiterhin sicher abschließen kann. Das ändert
 keine Ausführungs- oder Isolationsgarantie: NOVA führt diese Images weiterhin
 nicht in Ring 3 aus.
+
+## Quarantäne inkonsistenter freier Slots
+
+Ein Prozessslot ist nur dann wiederverwendbar, wenn sein gesamter Deskriptor
+nullgesetzt ist. Ein Slot mit `staged=false` und
+`rollback_pending=false` kann trotzdem durch einen beschädigten oder
+unterbrochenen Cleanup noch Eigentümerdaten oder gültige Frame-Tickets
+enthalten. `nova_process_image_is_empty()` prüft daher alle skalaren Felder,
+das Label und jeden Seiteneintrag. `PSTAGE` bricht vor ELF-Lesezugriffen und
+vor Speicherzuteilungen mit `NOVA_PROCESS_NO_SLOT` ab, wenn ein solcher
+unverfolgter Zustand gefunden wird. Widersprüchliche Kombinationen aus
+`staged` und `rollback_pending` blockieren ebenfalls neue Staging-Vorgänge.
+
+Der Host-Regressionstest `test_untracked_slot_quarantine` legt absichtlich
+einen gültigen, owner-gebundenen Frame-Ticket in einen scheinbar inaktiven
+Slot. Er prüft, dass `PSTAGE` keine PID vergibt, keine Frames zuteilt, die
+Ticketdaten nicht überschreibt und den Frame-Inhalt unverändert lässt.
+Erst nachdem der Test das Ticket ausdrücklich freigibt und den Slot nullsetzt,
+gelingt ein neuer Staging-Vorgang.
+
+Diese Quarantäne ist eine fail-closed-Reaktion auf inkonsistente Metadaten,
+keine automatische Reparatur. Ein echter Kernel müsste den Zustand diagnostisch
+melden und eine vertrauenswürdige Recovery-Strategie bereitstellen. Die
+Verwaltung bleibt single-core; es entstehen keine Prozessausführung oder
+hardwareseitige Isolationsgarantien.
