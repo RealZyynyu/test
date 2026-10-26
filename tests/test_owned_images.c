@@ -621,6 +621,28 @@ static void test_retryable_stage_rollback(void){
     assert(nova_pmm.in_use==2);
     table.slots[0].label[5]=0;
 
+    /* Malformed pending tickets quarantine the whole table before PSTAGE
+     * performs ELF reads or allocates frames. No PID or PMM state may change. */
+    const uint64_t saved_physical=table.slots[0].pages[0].physical_page;
+    table.slots[0].pages[0].physical_page=0;
+    uint32_t rejected_pid=123;
+    assert(stage(&table,other,&rejected_pid)==NOVA_PROCESS_NO_SLOT);
+    assert(rejected_pid==0&&table.next_pid==0&&nova_pmm.in_use==2);
+    table.slots[0].pages[0].physical_page=saved_physical;
+
+    const uint16_t saved_count=table.slots[0].page_count;
+    table.slots[0].page_count=NOVA_PROCESS_MAX_PAGES+1u;
+    rejected_pid=123;
+    assert(stage(&table,other,&rejected_pid)==NOVA_PROCESS_NO_SLOT);
+    assert(rejected_pid==0&&table.next_pid==0&&nova_pmm.in_use==2);
+    table.slots[0].page_count=saved_count;
+
+    table.slots[0].pages[NOVA_PROCESS_MAX_PAGES-1u].flags=1u;
+    rejected_pid=123;
+    assert(stage(&table,other,&rejected_pid)==NOVA_PROCESS_NO_SLOT);
+    assert(rejected_pid==0&&table.next_pid==0&&nova_pmm.in_use==2);
+    table.slots[0].pages[NOVA_PROCESS_MAX_PAGES-1u].flags=0;
+
     /* A new image may use another slot, but must not overwrite the pending
      * descriptor or alias any of its still-owned frames. */
     fail_second_read=false;
