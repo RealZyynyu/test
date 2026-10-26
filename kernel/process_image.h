@@ -106,11 +106,18 @@ static inline bool nova_process_image_is_empty(
 /* Fail closed if an unflagged slot contains residual metadata, or if the two
  * mutually exclusive teardown states are simultaneously set. Otherwise a
  * later PSTAGE could overwrite the only saved handle to an allocated frame. */
+static inline bool nova_process_stage_rollback_structural_valid(
+    const struct nova_process_image *image);
+
 static inline bool nova_process_table_has_untracked_state(
         const struct nova_process_table *table){
     if(!table)return true;
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
         const struct nova_process_image *image=&table->slots[i];
+        /* A pending rollback is reserved state, not a free slot. Validate its
+         * shape before any new PSTAGE can allocate or read an ELF image. */
+        if(image->rollback_pending &&
+           !nova_process_stage_rollback_structural_valid(image))return true;
         if(image->staged&&image->rollback_pending)return true;
         if(image->owner_retirement_pending&&image->rollback_pending)return true;
         if(!image->staged&&!image->rollback_pending&&
@@ -183,6 +190,39 @@ static inline bool nova_process_valid_physical(uint64_t phys){
     /* Match the address field of an x86-64 4-KiB PTE. */
     return phys!=0 && (phys&UINT64_C(0xFFF))==0 &&
            (phys&~UINT64_C(0x000FFFFFFFFFF000))==0;
+}
+
+/* Structural validation is deliberately callback-free: it protects the
+ * process table before PSTAGE performs any I/O or allocates another frame.
+ * Physical ownership/generation is revalidated by the release callbacks. */
+static inline bool nova_process_stage_rollback_structural_valid(
+    const struct nova_process_image *image){
+    if(!image||!image->rollback_pending||image->staged||
+       image->owner_retirement_pending||image->pid||image->entry||
+       image->segments||image->page_count>NOVA_PROCESS_MAX_PAGES||
+       (image->owner&&!image->guarded))return false;
+    for(size_t i=0;i<NOVA_PROCESS_LABEL_CAP;i++)
+        if(image->label[i])return false;
+    for(uint32_t i=0;i<image->page_count;i++){
+        const struct nova_process_page *page=&image->pages[i];
+        if(!page->frame||((uintptr_t)page->frame&4095u)||
+           !page->virtual_page||(page->virtual_page&UINT64_C(0xFFF))||
+           !nova_process_valid_physical(page->physical_page)||
+           (image->guarded ? !page->generation : page->generation!=0)||
+           (page->flags&~UINT32_C(7)))return false;
+        for(uint32_t j=0;j<i;j++){
+            const struct nova_process_page *prior=&image->pages[j];
+            if(nova_process_frame_overlaps(page->frame,prior->frame)||
+               page->physical_page==prior->physical_page||
+               page->virtual_page==prior->virtual_page)return false;
+        }
+    }
+    for(uint32_t i=image->page_count;i<NOVA_PROCESS_MAX_PAGES;i++){
+        const struct nova_process_page *page=&image->pages[i];
+        if(page->virtual_page||page->frame||page->physical_page||
+           page->generation||page->flags)return false;
+    }
+    return true;
 }
 /* Check physical identity and, for guarded frames, the allocation's
  * ORIGINAL generation. A pointer-only physical callback cannot validate a
@@ -480,6 +520,7 @@ static inline bool nova_process_retry_stage_rollback(
     nova_process_owner_retire_fn retire_owner,void *ctx){
     if(!table||slot>=NOVA_PROCESS_SLOTS||!physical)return false;
     struct nova_process_image *image=&table->slots[slot];
+    if(!nova_process_stage_rollback_structural_valid(image))return false;
     if(!image->rollback_pending||image->staged||
        image->owner_retirement_pending||image->pid||image->entry||
        image->segments||image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
