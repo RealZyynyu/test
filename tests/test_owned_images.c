@@ -669,6 +669,53 @@ static void test_retryable_stage_rollback(void){
     assert(!table.slots[0].rollback_pending);
     assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
 }
+/* An inactive-looking slot may still contain the only saved ticket for
+ * a live frame. PSTAGE must quarantine the table rather than erase it. */
+static void test_untracked_slot_quarantine(void){
+    setup();
+    uint64_t owner=0;
+    assert(nova_owner_create(&owner));
+    struct nova_frame_ticket held={0};
+    assert(nova_page_alloc_owned_ticket(NOVA_FRAME_IMAGE,owner,&held));
+    memset(held.frame,0xD9,4096);
+    uint64_t physical=0;
+    assert(nova_pmm_physical_ticket(&held,&physical));
+
+    struct nova_process_table table={0};
+    table.slots[0].guarded=true;
+    table.slots[0].owner=owner;
+    table.slots[0].page_count=1;
+    table.slots[0].pages[0]=(struct nova_process_page){
+        .virtual_page=UINT64_C(0x401000),
+        .frame=(uint8_t *)held.frame,
+        .physical_page=physical,
+        .generation=held.generation,
+        .flags=5
+    };
+    const uint32_t in_use=nova_pmm.in_use;
+    uint32_t pid=77;
+    assert(stage(&table,owner,&pid)==NOVA_PROCESS_NO_SLOT);
+    assert(pid==0&&table.next_pid==0);
+    assert(!table.slots[0].staged&&!table.slots[0].rollback_pending);
+    assert(table.slots[0].owner==owner&&table.slots[0].page_count==1);
+    assert(table.slots[0].pages[0].frame==held.frame);
+    assert(table.slots[0].pages[0].generation==held.generation);
+    assert(nova_pmm.in_use==in_use&&nova_pmm_ticket_valid(&held));
+    intact(held.frame,0xD9);
+    assert(!nova_owner_retire(owner));
+
+    /* Once the test explicitly resolves the orphan ticket and clears the
+     * quarantined descriptor, normal staging can resume. */
+    assert(nova_page_free_ticket(&held));
+    table.slots[0]=(struct nova_process_image){0};
+    assert(nova_owner_retire(owner));
+    uint64_t next_owner=0;
+    assert(nova_owner_create(&next_owner));
+    assert(stage(&table,next_owner,&pid)==NOVA_PROCESS_OK);
+    assert(nova_process_drop_guarded(&table,pid,legacy_phys,&guard,NULL));
+    assert(nova_owner_retire(next_owner));
+    assert(nova_pmm.in_use==0&&nova_pmm_metadata_valid());
+}
 static void test_retryable_owner_retirement(void){
     setup();
     uint64_t owner=0;
@@ -725,6 +772,7 @@ int main(void){
     test_retryable_image_release();
     test_retryable_space_teardown();
     test_retryable_stage_rollback();
+    test_untracked_slot_quarantine();
     test_retryable_owner_retirement();
     puts("Owned offline ELF and page tables: owner isolation, rollback, forged and stale tickets OK.");
     return 0;
