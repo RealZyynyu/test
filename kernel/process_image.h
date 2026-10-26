@@ -86,6 +86,39 @@ struct nova_process_table {
     struct nova_process_image slots[NOVA_PROCESS_SLOTS];
 };
 
+/* Reuse only a fully zeroed slot. A stale ticket in an apparently inactive
+ * descriptor is still ownership metadata and must never be overwritten. */
+static inline bool nova_process_image_is_empty(
+        const struct nova_process_image *image){
+    if(!image||image->staged||image->guarded||image->pid||image->owner||
+       image->owner_retirement_pending||image->rollback_pending||
+       image->entry||image->segments||image->page_count)return false;
+    for(size_t i=0;i<NOVA_PROCESS_LABEL_CAP;i++)
+        if(image->label[i])return false;
+    for(uint32_t i=0;i<NOVA_PROCESS_MAX_PAGES;i++){
+        const struct nova_process_page *page=&image->pages[i];
+        if(page->virtual_page||page->frame||page->physical_page||
+           page->generation||page->flags)return false;
+    }
+    return true;
+}
+
+/* Fail closed if an unflagged slot contains residual metadata, or if the two
+ * mutually exclusive teardown states are simultaneously set. Otherwise a
+ * later PSTAGE could overwrite the only saved handle to an allocated frame. */
+static inline bool nova_process_table_has_untracked_state(
+        const struct nova_process_table *table){
+    if(!table)return true;
+    for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
+        const struct nova_process_image *image=&table->slots[i];
+        if(image->staged&&image->rollback_pending)return true;
+        if(image->owner_retirement_pending&&image->rollback_pending)return true;
+        if(!image->staged&&!image->rollback_pending&&
+           !nova_process_image_is_empty(image))return true;
+    }
+    return false;
+}
+
 static inline void nova_process_copy_label(char *dest,const char *source){
     size_t k=0;
     if(source){
@@ -489,13 +522,16 @@ static inline enum nova_process_result nova_process_stage_impl(
            (!guard->allocate||!guard->physical||!guard->release))
               : (owner||!allocate||!free_page)))
         return NOVA_PROCESS_BAD_INPUT;
+    if(nova_process_table_has_untracked_state(table))
+        return NOVA_PROCESS_NO_SLOT;
     struct nova_elf_info elf;
     if(nova_elf64_probe(read_file,read_context,file_size,&elf)!=NOVA_ELF_OK)
         return NOVA_PROCESS_INVALID_ELF;
     if(elf.pages>NOVA_PROCESS_MAX_PAGES)return NOVA_PROCESS_TOO_LARGE;
     struct nova_process_image *image=NULL;
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
-        if(!table->slots[i].staged&&!table->slots[i].rollback_pending){
+        if(!table->slots[i].staged&&!table->slots[i].rollback_pending&&
+           nova_process_image_is_empty(&table->slots[i])){
             image=&table->slots[i];break;
         }
     }
