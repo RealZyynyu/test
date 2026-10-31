@@ -405,7 +405,8 @@ static void app_content(void){
         text(397,194,"NOVA FILES",2,fg);
         text(397,229,"RAM DISK   /   HOME   -   VOLATILE STORAGE",1,secondary);
         rect(394,253,678,1,night?0x3D4661:0xE8ECF2);
-        if(file_open<0){            for(int index=0;index<8;index++){
+        if(file_open<0){
+            for(int index=0;index<8;index++){
                 int slot=nova_file_slot_by_ordinal((size_t)(finder_page*8+index));
                 if(slot<0)continue;
                 int x=400+(index%4)*165, y=266+(index/4)*119;
@@ -804,7 +805,8 @@ static bool nova_stack_ticket_physical(void *ctx,const void *frame,
     return nova_pmm_physical_ticket(&ticket,out);
 }
 static bool nova_stack_ticket_release(void *ctx,void *frame,
-                                      uint64_t generation){    (void)ctx;
+                                      uint64_t generation){
+    (void)ctx;
     struct nova_frame_ticket ticket={
         .frame=frame,.generation=generation,.role=NOVA_FRAME_STACK
     };
@@ -1203,7 +1205,8 @@ static void shell_execute(void){
         uint32_t pid=nova_pid_parse(shell_input+5);
         struct nova_process_image *p=nova_process_find(&nova_processes,pid);
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
-        else{            struct nova_user_space *space=&nova_user_spaces[nova_process_index(p)];
+        else{
+            struct nova_user_space *space=&nova_user_spaces[nova_process_index(p)];
             bool writable=nova_user_span_accessible(space,
                                    space->initial_rsp,16u,true);
             bool guard=nova_user_span_accessible(space,
