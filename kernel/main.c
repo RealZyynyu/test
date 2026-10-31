@@ -274,16 +274,20 @@ static void shadow(int x,int y,int w,int h,int rad){
         roundrect(x-i/2,y+i/2,w+i,h+i,rad+i/2,night?0x233052:0x5B658D);
 }
 static void bar(void){
-    alpha_rect(0,0,1280,36,night?0x14172A:0xFFFFFF,night?220:202);
-    rect(0,36,1280,1,night?0x374469:0xDDE3F0);
-    roundrect(21,7,22,22,7,night?0xEDF1FF:0x293F72);
-    text(27,12,"N",2,night?0x31427A:0xFFFFFF);
-    text(61,13,screen==1?"Finder":apps[screen],2,night?0xFFFFFF:0x1F2B40);
-    text(166,16,"File     Edit     View     Go     Window     Help",1,night?0xDCE7FC:0x2C384F);
-    // Compact original status glyphs.
-    circle(1045,14,11,9,night?0xEDF1FF:0x405978);
-    circle(1045,13,7,6,night?0x2A375B:0xEAF0F9);
-    circle(1045,16,3,3,night?0xEDF1FF:0x405978);
+    /* Compact macOS-inspired menu bar with a distinct NOVA identity. */
+    alpha_rect(0,0,1280,36,night?0x101426:0xFFFFFF,night?226:208);
+    rect(0,36,1280,1,night?0x3B4268:0xDDE3F0);
+    roundrect(20,6,24,24,8,night?0x7465C8:0x526FC0);
+    circle(32,18,8,8,0xE8E9FF);
+    text(27,12,"N",2,0x514B91);
+    text(54,13,"NOVA",2,night?0xF0F1FF:0x283858);
+    rect(111,10,1,17,night?0x4A5277:0xDCE2EF);
+    text(127,13,screen==1?"Finder":apps[screen],2,night?0xD5DDF6:0x53627E);
+    text(236,16,"File     Edit     View     Go     Window     Help",1,night?0xBFC9E5:0x53627E);
+    /* Minimal system indicators. */
+    circle(1045,14,11,9,night?0xE3E8FA:0x405978);
+    circle(1045,13,7,6,night?0x263052:0xEAF0F9);
+    circle(1045,16,3,3,night?0xE3E8FA:0x405978);
     roundrect(1072,10,27,13,3,night?0xE9EFF9:0x395873);
     rect(1100,14,3,5,night?0xE9EFF9:0x395873);
     rect(1075,13,21,7,night?0x435674:0xE9EFF9);
@@ -295,16 +299,18 @@ static void bar(void){
 
 
 static void appicon(int x,int y,int i,int selected){
-    static const uint32_t cols[]={0x5299E6,0x4E9FE9,0xF0C65B,0x8A7BDC,0xA2AABB,0x566B9B};
+    static const uint32_t cols[]={0x607FC8,0x477FAF,0xB18B54,0x7568B7,0x647A9E,0x566FAD};
     int w=58;
-    roundrect(x+2,y+4,w,w,13,night?0x323E60:0x5B6386);
-    roundrect(x,y,w,w,13,cols[i]);
+    /* Unified indigo tile language; app glyphs remain individually recognizable. */
+    roundrect(x+2,y+5,w,w,14,night?0x141A30:0x8995B3);
+    roundrect(x,y,w,w,14,night?0x343B62:0xD8E0F0);
+    roundrect(x+1,y+1,w-2,w-2,13,cols[i]);
     if(i==0){
-        circle(x+29,y+28,20,20,0xEDF5FF);
-        text(x+23,y+18,"N",3,0x5489D3);
+        circle(x+29,y+28,20,20,0xEDF2FF);
+        text(x+23,y+18,"N",3,0x596DB5);
     }else if(i==1){
-        roundrect(x+9,y+9,40,40,9,0xF0F9FF);
-        rect(x+9,y+9,20,40,0xA6D8FB);
+        roundrect(x+9,y+9,40,40,9,0xF0F5FF);
+        rect(x+9,y+9,20,40,0xA6D1F2);
         rect(x+28,y+18,2,17,0x3A77AA);
         rect(x+19,y+20,3,6,0x3A77AA);
         rect(x+38,y+20,3,6,0x3A77AA);
@@ -327,7 +333,9 @@ static void appicon(int x,int y,int i,int selected){
         circle(x+29,y+29,19,19,0xF4F6FF);
         text(x+24,y+20,"I",3,0x526C9A);
     }
-    if(selected)circle(x+29,y+69,3,3,night?0xFFFFFF:0x334363);
+    if(selected){
+        roundrect(x+22,y+67,14,3,2,night?0xD8D9FF:0x475D99);
+    }
 }
 static void dock(void){
     shadow(311,692,660,88,22);
@@ -397,8 +405,7 @@ static void app_content(void){
         text(397,194,"NOVA FILES",2,fg);
         text(397,229,"RAM DISK   /   HOME   -   VOLATILE STORAGE",1,secondary);
         rect(394,253,678,1,night?0x3D4661:0xE8ECF2);
-        if(file_open<0){
-            for(int index=0;index<8;index++){
+        if(file_open<0){            for(int index=0;index<8;index++){
                 int slot=nova_file_slot_by_ordinal((size_t)(finder_page*8+index));
                 if(slot<0)continue;
                 int x=400+(index%4)*165, y=266+(index/4)*119;
@@ -797,8 +804,7 @@ static bool nova_stack_ticket_physical(void *ctx,const void *frame,
     return nova_pmm_physical_ticket(&ticket,out);
 }
 static bool nova_stack_ticket_release(void *ctx,void *frame,
-                                      uint64_t generation){
-    (void)ctx;
+                                      uint64_t generation){    (void)ctx;
     struct nova_frame_ticket ticket={
         .frame=frame,.generation=generation,.role=NOVA_FRAME_STACK
     };
@@ -1197,8 +1203,7 @@ static void shell_execute(void){
         uint32_t pid=nova_pid_parse(shell_input+5);
         struct nova_process_image *p=nova_process_find(&nova_processes,pid);
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
-        else{
-            struct nova_user_space *space=&nova_user_spaces[nova_process_index(p)];
+        else{            struct nova_user_space *space=&nova_user_spaces[nova_process_index(p)];
             bool writable=nova_user_span_accessible(space,
                                    space->initial_rsp,16u,true);
             bool guard=nova_user_span_accessible(space,
