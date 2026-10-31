@@ -480,13 +480,21 @@ static void app_content(void){
         text(400,233,"Customize the way NOVA looks.",1,secondary);
         roundrect(396,264,672,327,17,pale);
         text(419,290,"APPEARANCE",2,fg);
-        roundrect(423,336,297,172,14,0xE2EDFC);
-        roundrect(742,336,297,172,14,0x353D65);
+        roundrect(423,336,297,172,14,night?0x252F49:0xE2EDFC);
+        roundrect(742,336,297,172,14,night?0x353D65:0x252F49);
         circle(614,421,88,73,0xA4B9E9);
         circle(940,418,88,73,0x7562AF);
-        text(437,480,"LIGHT",1,0x3C588B);
-        text(757,480,"DARK",1,0xEDF1FF);
-        text(421,551,"T: appearance.  P: pause game in Arcade.",1,secondary);
+        text(437,480,"LIGHT",1,night?0xAEBEDA:0x3C588B);
+        text(757,480,"DARK",1,night?0xEDF1FF:0xAEBEDA);
+        if(!night){
+            roundrect(437,493,104,20,7,0x526FC0);
+            text(448,499,"ACTIVE THEME",1,0xFFFFFF);
+        }else{
+            roundrect(757,493,104,20,7,0x7562AF);
+            text(768,499,"ACTIVE THEME",1,0xFFFFFF);
+        }
+        text(421,551,night?"CURRENT: DARK MODE":"CURRENT: LIGHT MODE",1,fg);
+        text(421,575,"Press T or select a preview to switch.",1,secondary);
     }else if(screen==5){
         text(398,191,"ABOUT THIS NOVA",2,fg);
         text(399,230,"An independent operating system project.",1,secondary);
