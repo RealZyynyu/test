@@ -158,7 +158,7 @@ static void number(int x,int y,unsigned int n,int scale,uint32_t c){
     text(x,y,buf,scale,c);
 }
 
-static int night=0;
+static int night=1;
 static char note[74]="HELLO FROM NOVA!";
 static unsigned int note_length=16;
 static const char *apps[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT","TERMINAL"};
@@ -219,19 +219,32 @@ static uint32_t mix(uint32_t a,uint32_t b,int t,int steps){
 }
 
 static void wallpaper(void){
-    // Original colorful, layered-ribbon panorama (no Apple assets).
-    uint32_t top=night?0x141738:0x183F70;
-    uint32_t bot=night?0x6D4DAD:0x8CB8F2;
-    for(int y=0;y<800;y+=2)rect(0,y,1280,2,mix(top,bot,y,800));
-    circle(1090,135,710,470,night?0x373473:0x3D68B2);
-    circle(1170,25,560,377,night?0x775CA8:0xA9A4F2);
-    circle(1240,-78,370,255,night?0xC083B7:0xE9BCE4);
-    circle(680,960,1060,600,night?0x2B438E:0x376DB4);
-    circle(420,965,925,565,night?0x405AB7:0x77A2E4);
-    circle(110,935,750,480,night?0x907BC6:0xC1C2F0);
-    circle(-245,900,640,440,night?0xBF83C2:0xECB7D6);
-    circle(-182,868,460,308,night?0xE1AED9:0xFCE0E9);
-    circle(1230,815,400,215,night?0x7058BB:0x9E9CE4);
+    /* NOVA cosmic desktop: original procedural space artwork, no external assets. */
+    const uint32_t deep=0x070B18;
+    const uint32_t upper=0x10142D;
+    for(int y=0;y<800;y+=2)rect(0,y,1280,2,mix(deep,upper,y,800));
+
+    /* Soft nebula bands, kept deliberately dark behind windows and text. */
+    circle(770,170,610,300,0x17163B);
+    circle(930,155,440,230,0x22205A);
+    circle(1090,120,270,160,0x302568);
+    circle(330,365,430,220,0x111C3B);
+    circle(560,405,320,170,0x151D48);
+
+    /* Deterministic star field: stable between redraws and inexpensive. */
+    for(int i=0;i<74;i++){
+        int sx=(i*197+53)%1280;
+        int sy=(i*113+29)%690;
+        uint32_t star=(i%9==0)?0xB7B9FF:((i%4==0)?0x687CCB:0x35466F);
+        rect(sx,sy,(i%9==0)?2:1,(i%9==0)?2:1,star);
+    }
+
+    /* Distant blue-violet planetary horizon along the lower edge. */
+    circle(710,1005,1040,520,0x182653);
+    circle(700,1018,900,440,0x253C79);
+    circle(690,1034,760,360,0x344D91);
+    circle(680,1050,630,280,0x111A38);
+    rect(0,692,1280,2,0x526BC1);
 }
 static void alpha_rect(int x,int y,int w,int h,uint32_t rgb,int a){
     if(a<=0)return; if(a>=255){rect(x,y,w,h,rgb);return;}
@@ -397,8 +410,7 @@ static void app_content(void){
             text(408,533,"PAGE",1,secondary);
             number(449,532,(unsigned)(finder_page+1),1,fg);
             roundrect(875,518,83,34,9,pale);
-            text(894,526,"PREV",1,fg);
-            roundrect(966,518,89,34,9,pale);
+            text(894,526,"PREV",1,fg);            roundrect(966,518,89,34,9,pale);
             text(989,526,"NEXT",1,fg);
         }else{
             text(408,271,"< BACK",2,night?0xD4E5FF:0x427BC6);
@@ -797,8 +809,7 @@ static bool nova_stack_owned_ticket_allocate(void *ctx,uint64_t owner,
                                              void **frame,uint64_t *generation){
     (void)ctx;
     if(!frame||!generation)return false;
-    *frame=NULL;*generation=0;
-    struct nova_frame_ticket ticket={0};
+    *frame=NULL;*generation=0;    struct nova_frame_ticket ticket={0};
     if(!nova_page_alloc_owned_ticket(NOVA_FRAME_STACK,owner,&ticket))return false;
     *frame=ticket.frame;*generation=ticket.generation;
     return true;
@@ -1197,8 +1208,7 @@ static void shell_execute(void){
         }
     }
     else if(shell_input[0]=='P'&&shell_input[1]=='D'&&
-            shell_input[2]=='R'&&shell_input[3]=='O'&&
-            shell_input[4]=='P'&&shell_input[5]==' '){
+            shell_input[2]=='R'&&shell_input[3]=='O'&&            shell_input[4]=='P'&&shell_input[5]==' '){
         uint32_t pid=nova_pid_parse(shell_input+6);
         struct nova_process_image *p=nova_process_find(&nova_processes,pid);
         if(!p)shell_result("STAGED IMAGE NOT FOUND");
