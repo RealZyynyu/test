@@ -448,6 +448,7 @@ static void app_content(void){
         text(759,446,"Arcade",2,fg);
         text(759,483,"Collect the golden tile.",1,secondary);
         text(759,507,"Press 4 to play.",1,secondary);
+        text(401,572,"SHORTCUTS: ESC HOME   2-8 OPEN APPS   T THEME",1,secondary);
         text(401,590,"PROTOTYPE  -  NOT READY TO REPLACE WINDOWS",1,night?0xE8B2C3:0xAE5772);
     }else if(screen==2){
         text(398,197,"NOTES",2,fg);
