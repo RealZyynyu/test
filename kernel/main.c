@@ -504,6 +504,10 @@ static void app_content(void){
         number(580,548,(unsigned)nova_pmm.pages,1,fg);
         text(650,550,"PCI devices:",1,secondary);
         number(758,548,(unsigned)nova_pci.devices,1,fg);
+        text(423,579,"SCHEDULER HEARTBEATS:",1,secondary);
+        number(590,577,(unsigned)nova_heartbeats,1,fg);
+        text(650,579,"FREE RAM PAGES:",1,secondary);
+        number(758,577,(unsigned)nova_last_free_pages,1,fg);
         text(405,608,"EXPERIMENTAL VM KERNEL - NOT READY FOR DAILY USE",1,secondary);
 
     }else if(screen==6){
