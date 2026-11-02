@@ -509,8 +509,8 @@ static void app_content(void){
         text(423,457,"SECURITY       IN DEVELOPMENT",1,fg);
         text(423,484,"GAMING         ARCADE ONLY",1,fg);
         text(423,511,"INPUT          KEYBOARD + PS2 MOUSE",1,fg);
-        text(423,550,"Physical pages:",1,secondary);
-        number(580,548,(unsigned)nova_pmm.pages,1,fg);
+        text(423,550,"Usable RAM (MB):",1,secondary);
+        number(580,548,(unsigned)usable_memory_mb,1,fg);
         text(650,550,"PCI devices:",1,secondary);
         number(758,548,(unsigned)nova_pci.devices,1,fg);
         text(423,579,"SCHEDULER HEARTBEATS:",1,secondary);
