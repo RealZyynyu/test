@@ -18,6 +18,14 @@ struct nova_fault_frame {
 /* Must correspond exactly to the assembly save/interrupt-frame layout. */
 _Static_assert(sizeof(struct nova_fault_frame)==20u*8u,
                "Incorrect kernel fault frame layout");
+_Static_assert(offsetof(struct nova_fault_frame,r15)==0u,
+               "Fault R15 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r8)==56u,
+               "Fault R8 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rdi)==64u,
+               "Fault RDI offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rax)==112u,
+               "Fault RAX offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,vector)==120u,
                "Fault vector offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,error_code)==128u,
