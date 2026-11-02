@@ -26,6 +26,19 @@ struct nova_tss64 {
     uint16_t iomap_base;
 } __attribute__((packed));
 
+/* Initialize a dormant TSS. iomap_base points one byte past the
+ * descriptor limit, disabling the optional I/O-permission bitmap: all
+ * port-I/O permissions remain denied when this TSS is eventually loaded.
+ * Stack pointers and IST entries deliberately remain zero until real,
+ * mapped kernel stacks have been allocated and audited.
+ */
+static inline bool nova_tss_init(struct nova_tss64 *tss){
+    if(!tss)return false;
+    *tss=(struct nova_tss64){0};
+    tss->iomap_base=(uint16_t)sizeof(*tss);
+    return true;
+}
+
 struct nova_tss_descriptor {
     uint16_t limit_low;
     uint16_t base_low;
