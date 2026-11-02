@@ -3,10 +3,14 @@
 #include "../kernel/tss.h"
 
 int main(void){
-    struct nova_tss64 tss={0};
-    tss.iomap_base=sizeof(tss);
+    struct nova_tss64 tss;
+    assert(nova_tss_init(&tss));
     assert(sizeof(tss)==104u);
     assert(tss.iomap_base==104u);
+    assert(tss.rsp0==0u && tss.rsp1==0u && tss.rsp2==0u);
+    assert(tss.ist1==0u && tss.ist2==0u && tss.ist3==0u);
+    assert(tss.ist4==0u && tss.ist5==0u && tss.ist6==0u && tss.ist7==0u);
+    assert(!nova_tss_init(NULL));
 
     struct nova_tss_descriptor d;
     uintptr_t base=(uintptr_t)UINT64_C(0x123456789ABC);
