@@ -21,6 +21,8 @@ NOVA is being designed around three non-negotiable product goals:
 
 Read the actionable [NOVA product vision and final-release criteria](docs/product-vision.md)
 for priorities, current limitations and acceptance tests.
+See also the [Windows game compatibility / Proton roadmap](docs/proton-compatibility-roadmap.md)
+for the required architecture and staged prerequisites.
 
 **Current reality:** NOVA has a basic Arcade game (WASD/arrows, P to pause),
 a tested game-input abstraction and an experimental framebuffer UI.
