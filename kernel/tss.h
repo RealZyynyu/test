@@ -39,6 +39,27 @@ static inline bool nova_tss_init(struct nova_tss64 *tss){
     return true;
 }
 
+/* Configure one-based IST slot 1..7 with a nonzero, 16-byte-aligned
+ * stack top. The caller remains responsible for mapping and reserving the
+ * stack before this value is ever used by a live IDT gate.
+ */
+static inline bool nova_tss_set_ist(struct nova_tss64 *tss,
+                                    unsigned slot,uint64_t stack_top){
+    if(!tss || slot<1u || slot>7u || !stack_top ||
+       (stack_top&15u)!=0)return false;
+    switch(slot){
+        case 1:tss->ist1=stack_top;break;
+        case 2:tss->ist2=stack_top;break;
+        case 3:tss->ist3=stack_top;break;
+        case 4:tss->ist4=stack_top;break;
+        case 5:tss->ist5=stack_top;break;
+        case 6:tss->ist6=stack_top;break;
+        case 7:tss->ist7=stack_top;break;
+        default:return false;
+    }
+    return true;
+}
+
 struct nova_tss_descriptor {
     uint16_t limit_low;
     uint16_t base_low;
