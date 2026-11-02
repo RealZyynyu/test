@@ -15,11 +15,32 @@ struct nova_job {
 };
 static struct nova_job nova_jobs[NOVA_MAX_JOBS];
 static uint32_t nova_job_count=0,nova_job_next=0;
+
+static bool nova_job_name_equal(const char *a,const char *b){
+    if(!a||!b)return false;
+    while(*a&&*b&&*a==*b){a++;b++;}
+    return *a==0&&*b==0;
+}
 static bool nova_job_add(const char *name,nova_job_fn fn){
-    if(nova_job_count>=NOVA_MAX_JOBS||!fn||!name)return false;
+    if(nova_job_count>=NOVA_MAX_JOBS||!fn||!name||!name[0])return false;
+    for(uint32_t i=0;i<nova_job_count;i++)
+        if(nova_job_name_equal(nova_jobs[i].name,name))return false;
     struct nova_job *j=&nova_jobs[nova_job_count++];
     j->name=name;j->fn=fn;j->runs=0;j->enabled=true;
     return true;
+}
+/* Enable or pause a registered job by its unique name. A paused job keeps
+ * its run counter and position; nova_job_step skips it without blocking peers.
+ */
+static bool nova_job_set_enabled(const char *name,bool enabled){
+    if(!name||!name[0])return false;
+    for(uint32_t i=0;i<nova_job_count;i++){
+        if(nova_job_name_equal(nova_jobs[i].name,name)){
+            nova_jobs[i].enabled=enabled;
+            return true;
+        }
+    }
+    return false;
 }
 static void nova_job_step(void){
     if(nova_job_count==0)return;
