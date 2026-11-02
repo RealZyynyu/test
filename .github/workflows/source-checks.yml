@@ -302,3 +302,20 @@ jobs:
             -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_tss.c -o /tmp/nova-tss-sanitized
           /tmp/nova-tss-sanitized
+
+  gdt-layout:
+    name: x86-64 GDT construction and selector layout (host only, no ISO)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test GDT and TSS descriptors with GCC
+        run: |
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+            tests/test_gdt.c -o /tmp/nova-gdt-test
+          /tmp/nova-gdt-test
+      - name: Test GDT validation with Clang ASan and UBSan
+        run: |
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            tests/test_gdt.c -o /tmp/nova-gdt-sanitized
+          /tmp/nova-gdt-sanitized
