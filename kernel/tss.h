@@ -1,0 +1,78 @@
+/* NOVA x86-64 Task State Segment (TSS) layout and descriptor helpers.
+ * This file defines data structures only. It does NOT load TR, replace the
+ * bootloader GDT, install IST stacks, or enable ring-3 execution.
+ */
+#ifndef NOVA_TSS_H
+#define NOVA_TSS_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct nova_tss64 {
+    uint32_t reserved0;
+    uint64_t rsp0;
+    uint64_t rsp1;
+    uint64_t rsp2;
+    uint64_t reserved1;
+    uint64_t ist1;
+    uint64_t ist2;
+    uint64_t ist3;
+    uint64_t ist4;
+    uint64_t ist5;
+    uint64_t ist6;
+    uint64_t ist7;
+    uint64_t reserved2;
+    uint16_t reserved3;
+    uint16_t iomap_base;
+} __attribute__((packed));
+
+struct nova_tss_descriptor {
+    uint16_t limit_low;
+    uint16_t base_low;
+    uint8_t base_mid;
+    uint8_t type_attr;
+    uint8_t limit_high_flags;
+    uint8_t base_high;
+    uint32_t base_upper;
+    uint32_t reserved;
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct nova_tss64)==104u,"x86-64 TSS must be 104 bytes");
+_Static_assert(offsetof(struct nova_tss64,rsp0)==4u,"TSS RSP0 offset mismatch");
+_Static_assert(offsetof(struct nova_tss64,ist1)==36u,"TSS IST1 offset mismatch");
+_Static_assert(offsetof(struct nova_tss64,iomap_base)==102u,"TSS I/O map offset mismatch");
+_Static_assert(sizeof(struct nova_tss_descriptor)==16u,"TSS descriptor must be 16 bytes");
+
+/* Build an available 64-bit TSS descriptor (type 0x9, present, DPL 0).
+ * The descriptor must occupy TWO consecutive GDT slots. It is not installed
+ * or loaded by this helper.
+ */
+static inline bool nova_tss_descriptor_build(struct nova_tss_descriptor *out,
+                                              uintptr_t base,uint32_t limit){
+    if(!out||limit>0xFFFFFu)return false;
+    uint64_t address=(uint64_t)base;
+    *out=(struct nova_tss_descriptor){0};
+    out->limit_low=(uint16_t)limit;
+    out->base_low=(uint16_t)address;
+    out->base_mid=(uint8_t)(address>>16);
+    out->type_attr=0x89u;
+    out->limit_high_flags=(uint8_t)((limit>>16)&0x0Fu);
+    out->base_high=(uint8_t)(address>>24);
+    out->base_upper=(uint32_t)(address>>32);
+    return true;
+}
+static inline uint64_t nova_tss_descriptor_base(
+    const struct nova_tss_descriptor *d){
+    if(!d)return 0;
+    return (uint64_t)d->base_low|
+        ((uint64_t)d->base_mid<<16)|
+        ((uint64_t)d->base_high<<24)|
+        ((uint64_t)d->base_upper<<32);
+}
+static inline uint32_t nova_tss_descriptor_limit(
+    const struct nova_tss_descriptor *d){
+    if(!d)return 0;
+    return (uint32_t)d->limit_low|
+        ((uint32_t)(d->limit_high_flags&0x0Fu)<<16);
+}
+#endif
