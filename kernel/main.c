@@ -1478,7 +1478,16 @@ void kmain(void){
     jobs_ready=jobs_ready && nova_job_add("RAMFS",nova_job_file_health);
     if(jobs_ready){
         nova_job_step();nova_job_step();nova_job_step();
-        serial_log(nova_job_total_runs()==3?"NOVA_SCHED_SELFTEST_OK\n":"NOVA_SCHED_SELFTEST_FAILED\n");
+        bool scheduler_controls_ok=nova_job_total_runs()==3 &&
+            !nova_job_add("MEMORY",nova_job_memory_poll) &&
+            nova_job_set_enabled("MEMORY",false);
+        nova_job_step();nova_job_step();
+        scheduler_controls_ok=scheduler_controls_ok && nova_jobs[1].runs==1 &&
+            nova_job_set_enabled("MEMORY",true);
+        nova_job_step();nova_job_step();nova_job_step();
+        scheduler_controls_ok=scheduler_controls_ok && nova_jobs[1].runs==2 &&
+            nova_job_total_runs()==8;
+        serial_log(scheduler_controls_ok?"NOVA_SCHED_SELFTEST_OK\n":"NOVA_SCHED_SELFTEST_FAILED\n");
     }
     if(nova_mouse_init())serial_log("NOVA_PS2_MOUSE_ENABLED\n");
     else serial_log("NOVA_PS2_MOUSE_UNAVAILABLE\n");
