@@ -286,7 +286,6 @@ jobs:
           fi
           echo "Final ISO is manual-only."
 
-
   tss-layout:
     name: x86-64 TSS layout and descriptor helpers (host only, no ISO)
     runs-on: ubuntu-24.04
@@ -294,12 +293,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test TSS layout and descriptor encoding with GCC
         run: |
-          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \\
+          gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
             tests/test_tss.c -o /tmp/nova-tss-test
           /tmp/nova-tss-test
       - name: Test TSS descriptor helpers with Clang ASan and UBSan
         run: |
-          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \\
-            -fsanitize=address,undefined -fno-sanitize-recover=all \\
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
             tests/test_tss.c -o /tmp/nova-tss-sanitized
           /tmp/nova-tss-sanitized
