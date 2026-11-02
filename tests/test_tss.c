@@ -12,6 +12,16 @@ int main(void){
     assert(tss.ist4==0u && tss.ist5==0u && tss.ist6==0u && tss.ist7==0u);
     assert(!nova_tss_init(NULL));
 
+    /* IST entries are configurable data only; no IDT gate or TR is loaded. */
+    assert(nova_tss_set_ist(&tss,1u,UINT64_C(0x1000)));
+    assert(nova_tss_set_ist(&tss,7u,UINT64_C(0x7000)));
+    assert(tss.ist1==UINT64_C(0x1000) && tss.ist7==UINT64_C(0x7000));
+    assert(!nova_tss_set_ist(NULL,1u,UINT64_C(0x1000)));
+    assert(!nova_tss_set_ist(&tss,0u,UINT64_C(0x1000)));
+    assert(!nova_tss_set_ist(&tss,8u,UINT64_C(0x1000)));
+    assert(!nova_tss_set_ist(&tss,2u,0u));
+    assert(!nova_tss_set_ist(&tss,2u,UINT64_C(0x1001)));
+
     struct nova_tss_descriptor d;
     uintptr_t base=(uintptr_t)UINT64_C(0x123456789ABC);
     assert(nova_tss_descriptor_build(&d,base,sizeof(tss)-1u));
