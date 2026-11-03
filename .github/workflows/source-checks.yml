@@ -8,6 +8,7 @@ on:
       - '.github/workflows/source-checks.yml'
       - '.github/workflows/build-native-iso.yml'
       - 'docs/**'
+      - 'tools/generate_font.py'
   workflow_dispatch:
 permissions:
   contents: read
