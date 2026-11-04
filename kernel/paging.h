@@ -259,9 +259,28 @@ static inline bool nova_pt_tables_releasable(
     }
     return true;
 }
+/* A count beyond its backing array is not a valid retry record.
+ * Abandon the descriptor without freeing anything: the number and identity
+ * of its frames can no longer be trusted. Preserve owner metadata and poison
+ * the tree so it cannot be reused after the deliberate leak. */
+static inline void nova_pt_poison_descriptor(struct nova_page_table *tree){
+    const uint64_t owner=tree->owner;
+    const bool guarded=tree->tables_guarded;
+    *tree=(struct nova_page_table){0};
+    tree->owner=owner;
+    tree->tables_guarded=guarded;
+    tree->teardown_started=true;
+}
 static inline bool nova_pt_destroy(struct nova_page_table *tree,
                                     const struct nova_pt_ops *ops){
-    if(!tree||!ops||!nova_pt_tables_releasable(tree,ops))return false;
+    if(!tree||!ops)return false;
+    if(tree->tables_used>NOVA_PT_MAX_TABLES ||
+       tree->protected_count>NOVA_PROCESS_MAX_PAGES ||
+       tree->mapped_pages>NOVA_PT_MAX_MAPPED_PAGES){
+        nova_pt_poison_descriptor(tree);
+        return false;
+    }
+    if(!nova_pt_tables_releasable(tree,ops))return false;
     tree->teardown_started=true;
     tree->prepared=false;
     /* Keep the root until every child has been released. On callback failure,

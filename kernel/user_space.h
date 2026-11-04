@@ -107,9 +107,31 @@ static inline bool nova_user_space_frames_releasable(
     }
     return true;
 }
+/* Unbounded counts cannot be iterated safely. Abandon all references
+ * without releasing frames, preserve the owner identity, and permanently
+ * disable this offline address-space descriptor rather than risking an
+ * out-of-bounds read or freeing a frame whose ownership is unknown. */
+static inline void nova_user_space_poison_descriptor(struct nova_user_space *space){
+    const uint64_t owner=space->page_tables.owner;
+    const bool tables_guarded=space->page_tables.tables_guarded;
+    const bool stack_guarded=space->stack_guarded;
+    *space=(struct nova_user_space){0};
+    space->teardown_started=true;
+    space->stack_guarded=stack_guarded;
+    space->page_tables.owner=owner;
+    space->page_tables.tables_guarded=tables_guarded;
+    space->page_tables.teardown_started=true;
+}
 static inline bool nova_user_space_destroy(struct nova_user_space *space,
                                             const struct nova_pt_ops *ops){
     if(!space||!ops)return false;
+    if(space->stack_count>NOVA_USER_STACK_PAGES ||
+       space->page_tables.tables_used>NOVA_PT_MAX_TABLES ||
+       space->page_tables.protected_count>NOVA_PROCESS_MAX_PAGES ||
+       space->page_tables.mapped_pages>NOVA_PT_MAX_MAPPED_PAGES){
+        nova_user_space_poison_descriptor(space);
+        return false;
+    }
     if(!space->teardown_started){
         if(!nova_user_space_frames_releasable(space,ops))return false;
         space->teardown_started=true;
