@@ -126,12 +126,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - name: Validate ELF frame ABA protection using GCC
         run: |
           gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
             -Itests/stubs tests/test_image_tickets.c -o /tmp/nova-image-tickets
           /tmp/nova-image-tickets
       - name: Validate stale tickets and rollback using Clang sanitizers
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
         run: |
           clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
             -Itests/stubs -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -233,12 +235,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - name: Test staged ELF PT_LOAD images with GCC
         run: |
           gcc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
             tests/test_process_image.c -o /tmp/nova-process-test
           /tmp/nova-process-test
       - name: Test process image allocation and rollback with sanitizers
+        if: ${{ always() && steps.checkout.outcome == 'success' }}
         run: |
           clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic \
             -fsanitize=address,undefined -fno-sanitize-recover=all \
