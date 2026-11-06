@@ -75,6 +75,7 @@ struct nova_process_image {
     uint64_t owner; /* registered PMM owner ID, 0 for legacy; not a PID */
     bool owner_retirement_pending; /* frames gone; retry owner retirement only */
     bool rollback_pending; /* failed PSTAGE cleanup; slot stays reserved */
+    bool quarantined; /* failed PDROP preflight; retained, hidden, never reused */
     uint64_t entry;
     uint16_t segments;
     uint16_t page_count;
@@ -92,7 +93,8 @@ static inline bool nova_process_image_is_empty(
         const struct nova_process_image *image){
     if(!image||image->staged||image->guarded||image->pid||image->owner||
        image->owner_retirement_pending||image->rollback_pending||
-       image->entry||image->segments||image->page_count)return false;
+       image->quarantined||image->entry||image->segments||image->page_count)
+        return false;
     for(size_t i=0;i<NOVA_PROCESS_LABEL_CAP;i++)
         if(image->label[i])return false;
     for(uint32_t i=0;i<NOVA_PROCESS_MAX_PAGES;i++){
@@ -114,6 +116,14 @@ static inline bool nova_process_table_has_untracked_state(
     if(!table)return true;
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
         const struct nova_process_image *image=&table->slots[i];
+        /* A quarantined image retains untrusted frame metadata permanently.
+         * It is hidden from process APIs, but other empty slots remain usable. */
+        if(image->quarantined){
+            if(!image->staged||image->rollback_pending||
+               image->owner_retirement_pending||image->owner||!image->pid)
+                return true;
+            continue;
+        }
         /* A pending rollback is reserved state, not a free slot. Validate its
          * shape before any new PSTAGE can allocate or read an ELF image. */
         if(image->rollback_pending &&
@@ -156,7 +166,7 @@ static inline uint32_t nova_process_count(const struct nova_process_table *table
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++){
         const struct nova_process_image *image=&table->slots[i];
         if(image->staged&&!image->rollback_pending&&
-           !image->owner_retirement_pending)n++;
+           !image->owner_retirement_pending&&!image->quarantined)n++;
     }
     return n;
 }
@@ -167,7 +177,8 @@ static inline struct nova_process_image *nova_process_find_any(
         struct nova_process_table *table,uint32_t pid){
     if(!table||!pid)return NULL;
     for(uint32_t i=0;i<NOVA_PROCESS_SLOTS;i++)
-        if(table->slots[i].staged && table->slots[i].pid==pid)
+        if(table->slots[i].staged && !table->slots[i].quarantined &&
+           table->slots[i].pid==pid)
             return &table->slots[i];
     return NULL;
 }
@@ -197,7 +208,7 @@ static inline bool nova_process_valid_physical(uint64_t phys){
  * Physical ownership/generation is revalidated by the release callbacks. */
 static inline bool nova_process_stage_rollback_structural_valid(
     const struct nova_process_image *image){
-    if(!image||!image->rollback_pending||image->staged||
+    if(!image||!image->rollback_pending||image->staged||image->quarantined||
        image->owner_retirement_pending||image->pid||image->entry||
        image->segments||image->page_count>NOVA_PROCESS_MAX_PAGES||
        (image->owner&&!image->guarded))return false;
@@ -265,7 +276,7 @@ static inline bool nova_process_frames_releasable_guarded(
     const struct nova_process_table *table,
     nova_process_phys_fn physical,void *context,
     const struct nova_process_guard_ops *guard){
-    if(!image||image->owner_retirement_pending||!physical||
+    if(!image||image->quarantined||image->owner_retirement_pending||!physical||
        image->page_count>NOVA_PROCESS_MAX_PAGES||
        (image->guarded &&
         (!guard || (image->owner ?
@@ -287,7 +298,8 @@ static inline bool nova_process_frames_releasable_guarded(
         if(table){
             for(uint32_t slot=0;slot<NOVA_PROCESS_SLOTS;slot++){
                 const struct nova_process_image *other=&table->slots[slot];
-                if(other==image||(!other->staged&&!other->rollback_pending))continue;
+                if(other==image||other->quarantined||
+                   (!other->staged&&!other->rollback_pending))continue;
                 if(other->page_count>NOVA_PROCESS_MAX_PAGES)return false;
                 for(uint32_t j=0;j<other->page_count;j++){
                     const struct nova_process_page *foreign=&other->pages[j];
@@ -315,7 +327,7 @@ static inline bool nova_process_release_image_impl(
     struct nova_process_image *image,const struct nova_process_table *table,
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx,
     const struct nova_process_guard_ops *guard){
-    if(!image||image->owner_retirement_pending)return false;
+    if(!image||image->owner_retirement_pending||image->quarantined)return false;
     const bool safe=(image->guarded ?
         (guard && (image->owner ? guard->release_owned!=NULL :
                                   guard->release!=NULL)) :
@@ -350,12 +362,26 @@ static inline bool nova_process_release_image(
     return nova_process_release_image_impl(
         image,table,free_page,physical,ctx,NULL);
 }
+/* A failed whole-image preflight must hide an ownerless image without
+ * discarding its frame metadata. Its slot remains reserved permanently:
+ * uncertain ownership is leaked rather than reused or partially freed. */
+static inline void nova_process_quarantine_failed_drop(
+    struct nova_process_image *image){
+    if(!image||!image->staged||image->owner||
+       image->rollback_pending||image->owner_retirement_pending)return;
+    image->quarantined=true;
+}
+
 static inline bool nova_process_drop(
     struct nova_process_table *table,uint32_t pid,
     nova_process_free_fn free_page,nova_process_phys_fn physical,void *ctx){
     if(!free_page||!physical)return false;
     struct nova_process_image *image=nova_process_find(table,pid);
     if(!image||image->guarded)return false;
+    if(!nova_process_frames_releasable_guarded(image,table,physical,ctx,NULL)){
+        nova_process_quarantine_failed_drop(image);
+        return false;
+    }
     return nova_process_release_image_impl(
         image,table,free_page,physical,ctx,NULL);
 }
@@ -368,12 +394,16 @@ static inline bool nova_process_drop_guarded(
     if(!image||!image->guarded||image->owner_retirement_pending ||
        (image->owner ? (!guard->physical_owned||!guard->release_owned) :
                        (!guard->physical||!guard->release)))return false;
+    if(!nova_process_frames_releasable_guarded(image,table,physical,ctx,guard)){
+        nova_process_quarantine_failed_drop(image);
+        return false;
+    }
     return nova_process_release_image_impl(
         image,table,NULL,physical,ctx,guard);
 }
 static inline bool nova_process_owner_tombstone_valid(
     const struct nova_process_image *image){
-    if(!image||!image->staged||!image->guarded||
+    if(!image||!image->staged||!image->guarded||image->quarantined||
        image->rollback_pending||!image->owner_retirement_pending||
        !image->owner||!image->pid||
        image->page_count||image->entry||image->segments||image->label[0])
@@ -449,7 +479,8 @@ static inline bool nova_process_frame_available_owned(
     }
     for(uint32_t slot=0;slot<NOVA_PROCESS_SLOTS;slot++){
         const struct nova_process_image *other=&table->slots[slot];
-        if(other==current||(!other->staged&&!other->rollback_pending))continue;
+        if(other==current||other->quarantined||
+           (!other->staged&&!other->rollback_pending))continue;
         if(other->page_count>NOVA_PROCESS_MAX_PAGES)return false;
         for(uint32_t j=0;j<other->page_count;j++){
             const struct nova_process_page *page=&other->pages[j];
@@ -687,7 +718,7 @@ static inline enum nova_process_result nova_process_stage_owned_guarded(
 /* Debugger-only read of staged bytes. Does not enforce user privileges. */
 static inline bool nova_process_peek(const struct nova_process_image *image,
                  uint64_t vaddr,uint8_t *out,size_t size){
-    if(!image||!image->staged||(!out&&size)||
+    if(!image||!image->staged||image->quarantined||(!out&&size)||
        image->page_count>NOVA_PROCESS_MAX_PAGES)return false;
     for(size_t i=0;i<size;i++){
         if(vaddr>UINT64_MAX-i)return false;
