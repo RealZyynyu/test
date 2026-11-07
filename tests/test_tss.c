@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdint.h>
+#include <string.h>
 #include "../kernel/tss.h"
 
 int main(void){
@@ -16,11 +17,15 @@ int main(void){
     assert(nova_tss_set_ist(&tss,1u,UINT64_C(0x1000)));
     assert(nova_tss_set_ist(&tss,7u,UINT64_C(0x7000)));
     assert(tss.ist1==UINT64_C(0x1000) && tss.ist7==UINT64_C(0x7000));
+
+    /* Rejected updates must leave the complete TSS unchanged. */
+    struct nova_tss64 before_invalid=tss;
     assert(!nova_tss_set_ist(NULL,1u,UINT64_C(0x1000)));
     assert(!nova_tss_set_ist(&tss,0u,UINT64_C(0x1000)));
     assert(!nova_tss_set_ist(&tss,8u,UINT64_C(0x1000)));
     assert(!nova_tss_set_ist(&tss,2u,0u));
     assert(!nova_tss_set_ist(&tss,2u,UINT64_C(0x1001)));
+    assert(memcmp(&tss,&before_invalid,sizeof(tss))==0);
 
     struct nova_tss_descriptor d;
     uintptr_t base=(uintptr_t)UINT64_C(0x123456789ABC);
