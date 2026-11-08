@@ -21,6 +21,14 @@ int main(void){
     assert(gdtr.limit==sizeof(g)-1u);
     assert(gdtr.base==(uint64_t)(uintptr_t)&g);
     assert(nova_gdt_valid(&g,&tss));
+    /* All four high-nibble flag bits are reserved for a 64-bit TSS. */
+    for(uint8_t reserved=0x10u;reserved;
+        reserved=(uint8_t)(reserved<<1)){
+        g.tss.limit_high_flags=reserved;
+        assert(!nova_gdt_valid(&g,&tss));
+    }
+    g.tss.limit_high_flags=0;
+    assert(nova_gdt_valid(&g,&tss));
     g.entries[4]^=1u;
     assert(!nova_gdt_valid(&g,&tss));
     nova_gdtr_build(&gdtr,NULL);

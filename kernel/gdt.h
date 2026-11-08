@@ -66,6 +66,7 @@ static inline bool nova_gdt_valid(const struct nova_gdt *g,
        g->entries[3]!=NOVA_GDT_USER_DATA||
        g->entries[4]!=NOVA_GDT_USER_CODE||
        g->tss.type_attr!=0x89u||
+       (g->tss.limit_high_flags&0xF0u)!=0||
        nova_tss_descriptor_base(&g->tss)!=(uint64_t)(uintptr_t)tss||
        nova_tss_descriptor_limit(&g->tss)!=sizeof(*tss)-1u||
        g->tss.reserved!=0)return false;
