@@ -74,6 +74,8 @@ struct nova_tss_descriptor {
 _Static_assert(sizeof(struct nova_tss64)==104u,"x86-64 TSS must be 104 bytes");
 _Static_assert(offsetof(struct nova_tss64,rsp0)==4u,"TSS RSP0 offset mismatch");
 _Static_assert(offsetof(struct nova_tss64,ist1)==36u,"TSS IST1 offset mismatch");
+_Static_assert(offsetof(struct nova_tss64,reserved2)==92u,"TSS reserved2 offset mismatch");
+_Static_assert(offsetof(struct nova_tss64,reserved3)==100u,"TSS reserved3 offset mismatch");
 _Static_assert(offsetof(struct nova_tss64,iomap_base)==102u,"TSS I/O map offset mismatch");
 _Static_assert(sizeof(struct nova_tss_descriptor)==16u,"TSS descriptor must be 16 bytes");
 
