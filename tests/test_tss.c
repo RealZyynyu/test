@@ -21,6 +21,18 @@ int main(void){
     assert(nova_tss_set_ist(&tss,1u,UINT64_C(0x1000)));
     assert(nova_tss_set_ist(&tss,7u,UINT64_C(0x7000)));
     assert(tss.ist1==UINT64_C(0x1000) && tss.ist7==UINT64_C(0x7000));
+    assert(nova_tss_set_ist(&tss,2u,UINT64_C(0x2000)));
+    assert(nova_tss_set_ist(&tss,3u,UINT64_C(0x3000)));
+    assert(nova_tss_set_ist(&tss,4u,UINT64_C(0x4000)));
+    assert(nova_tss_set_ist(&tss,5u,UINT64_C(0x5000)));
+    assert(nova_tss_set_ist(&tss,6u,UINT64_C(0x6000)));
+    assert(tss.ist1==UINT64_C(0x1000));
+    assert(tss.ist2==UINT64_C(0x2000));
+    assert(tss.ist3==UINT64_C(0x3000));
+    assert(tss.ist4==UINT64_C(0x4000));
+    assert(tss.ist5==UINT64_C(0x5000));
+    assert(tss.ist6==UINT64_C(0x6000));
+    assert(tss.ist7==UINT64_C(0x7000));
     assert(nova_tss_valid(&tss));
 
     /* Reserved fields and the absent I/O-bitmap offset are mandatory. */
