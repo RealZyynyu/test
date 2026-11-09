@@ -12,6 +12,18 @@ application. The kernel is loaded through the Limine boot protocol and uses
 the bootloader-provided memory map and higher-half direct-map (HHDM)
 information during early initialization.
 
+The native build workflow pins the external
+`Limine-Bootloader/limine-c-template-x86-64` template to commit
+`5284c9db6d5d5625f01040863e49d3e861698d03`. Its x86-64 linker script is
+`kernel/linker-scripts/x86_64.lds`: the kernel entry symbol is `kmain`,
+the image begins at `0xffffffff80000000`, and the script separates
+Limine-request, executable text, read-only data, and writable data load
+segments on 4 KiB boundaries. The template's kernel flags include
+`-ffreestanding`, `-fno-stack-protector`, `-mno-red-zone`,
+`-mno-sse`, and `-mcmodel=kernel`; its link uses `-nostdlib`,
+`-static`, and that linker script. These are build-template properties,
+not proof that every boot-time CPU or memory assumption has been validated.
+
 The kernel currently contains an experimental framebuffer desktop and
 in-kernel utilities. It is a development system, not a secure daily-use OS.
 The repository's release policy is deliberately conservative: ordinary
