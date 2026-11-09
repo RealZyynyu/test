@@ -6,12 +6,27 @@
 
 int main(void){
     struct nova_gdt g;
-    struct nova_tss64 tss={0};
+    struct nova_tss64 tss;
+    assert(nova_tss_init(&tss));
     struct nova_gdtr gdtr={0};
     assert(!nova_gdt_build(NULL,&tss));
     assert(!nova_gdt_build(&g,NULL));
     assert(nova_gdt_build(&g,&tss));
     assert(nova_gdt_valid(&g,&tss));
+    /* A candidate GDT must reject a TSS with reserved bits or I/O policy
+       fields corrupted, without accepting a partially valid descriptor. */
+    struct nova_tss64 invalid_tss=tss;
+    invalid_tss.reserved0=1u;
+    assert(!nova_gdt_build(&g,&invalid_tss));
+    invalid_tss=tss; invalid_tss.reserved1=1u;
+    assert(!nova_gdt_build(&g,&invalid_tss));
+    invalid_tss=tss; invalid_tss.reserved2=1u;
+    assert(!nova_gdt_build(&g,&invalid_tss));
+    invalid_tss=tss; invalid_tss.reserved3=1u;
+    assert(!nova_gdt_build(&g,&invalid_tss));
+    invalid_tss=tss; invalid_tss.iomap_base=0u;
+    assert(!nova_gdt_build(&g,&invalid_tss));
+    assert(nova_gdt_build(&g,&tss));
     assert(g.entries[0]==0);
     assert(g.entries[1]==NOVA_GDT_KERNEL_CODE);
     assert(g.entries[2]==NOVA_GDT_KERNEL_DATA);

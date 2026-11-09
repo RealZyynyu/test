@@ -60,6 +60,16 @@ static inline bool nova_tss_set_ist(struct nova_tss64 *tss,
     return true;
 }
 
+/* Validate the dormant, deny-all-I/O TSS representation. The I/O bitmap
+ * is intentionally absent: iomap_base must remain one byte beyond the
+ * 104-byte TSS limit, and all architecturally reserved fields stay zero.
+ */
+static inline bool nova_tss_valid(const struct nova_tss64 *tss){
+    return tss && tss->reserved0==0u && tss->reserved1==0u &&
+           tss->reserved2==0u && tss->reserved3==0u &&
+           tss->iomap_base==sizeof(*tss);
+}
+
 struct nova_tss_descriptor {
     uint16_t limit_low;
     uint16_t base_low;

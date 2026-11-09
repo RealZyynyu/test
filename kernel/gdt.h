@@ -42,7 +42,7 @@ _Static_assert(offsetof(struct nova_gdt,tss)==40u,"TSS GDT slot mismatch");
 
 static inline bool nova_gdt_build(struct nova_gdt *g,
                                   const struct nova_tss64 *tss){
-    if(!g||!tss)return false;
+    if(!g||!nova_tss_valid(tss))return false;
     *g=(struct nova_gdt){0};
     g->entries[1]=NOVA_GDT_KERNEL_CODE;
     g->entries[2]=NOVA_GDT_KERNEL_DATA;
@@ -60,7 +60,7 @@ static inline void nova_gdtr_build(struct nova_gdtr *gdtr,
 }
 static inline bool nova_gdt_valid(const struct nova_gdt *g,
                                   const struct nova_tss64 *tss){
-    if(!g||!tss||g->entries[0]!=0||
+    if(!g||!nova_tss_valid(tss)||g->entries[0]!=0||
        g->entries[1]!=NOVA_GDT_KERNEL_CODE||
        g->entries[2]!=NOVA_GDT_KERNEL_DATA||
        g->entries[3]!=NOVA_GDT_USER_DATA||
