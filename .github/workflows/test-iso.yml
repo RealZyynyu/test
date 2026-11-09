@@ -1,3 +1,4 @@
+# Test-only build: upload a short-lived Actions artifact; never publish a release or modify a host disk.
 name: NOVA Test ISO (artifact only)
 
 on:
