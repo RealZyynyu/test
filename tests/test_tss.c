@@ -66,7 +66,11 @@ int main(void){
     assert(d.reserved==0u);
 
     assert(!nova_tss_descriptor_build(NULL,base,103u));
+    struct nova_tss_descriptor unchanged=d;
+    assert(!nova_tss_descriptor_build(&d,0u,103u));
+    assert(memcmp(&d,&unchanged,sizeof(d))==0);
     assert(!nova_tss_descriptor_build(&d,base,0x100000u));
+    assert(memcmp(&d,&unchanged,sizeof(d))==0);
     assert(nova_tss_descriptor_base(NULL)==0u);
     assert(nova_tss_descriptor_limit(NULL)==0u);
     return 0;

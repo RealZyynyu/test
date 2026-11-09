@@ -95,16 +95,20 @@ _Static_assert(sizeof(struct nova_tss_descriptor)==16u,"TSS descriptor must be 1
  */
 static inline bool nova_tss_descriptor_build(struct nova_tss_descriptor *out,
                                               uintptr_t base,uint32_t limit){
-    if(!out||limit>0xFFFFFu)return false;
+    /* A null base cannot identify a live TSS. Build into a temporary so
+     * rejected inputs never leave a partially overwritten descriptor.
+     */
+    if(!out||!base||limit>0xFFFFFu)return false;
     uint64_t address=(uint64_t)base;
-    *out=(struct nova_tss_descriptor){0};
-    out->limit_low=(uint16_t)limit;
-    out->base_low=(uint16_t)address;
-    out->base_mid=(uint8_t)(address>>16);
-    out->type_attr=0x89u;
-    out->limit_high_flags=(uint8_t)((limit>>16)&0x0Fu);
-    out->base_high=(uint8_t)(address>>24);
-    out->base_upper=(uint32_t)(address>>32);
+    struct nova_tss_descriptor candidate={0};
+    candidate.limit_low=(uint16_t)limit;
+    candidate.base_low=(uint16_t)address;
+    candidate.base_mid=(uint8_t)(address>>16);
+    candidate.type_attr=0x89u;
+    candidate.limit_high_flags=(uint8_t)((limit>>16)&0x0Fu);
+    candidate.base_high=(uint8_t)(address>>24);
+    candidate.base_upper=(uint32_t)(address>>32);
+    *out=candidate;
     return true;
 }
 static inline uint64_t nova_tss_descriptor_base(
