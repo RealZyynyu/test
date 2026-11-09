@@ -1,0 +1,111 @@
+name: NOVA Test ISO (artifact only)
+
+on:
+  push:
+    branches:
+      - nova-os-native
+    paths:
+      - "kernel/**"
+      - "tools/**"
+      - "limine.conf"
+      - ".github/workflows/test-iso.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out NOVA source
+        uses: actions/checkout@v4
+
+      - name: Install boot-image dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm xorriso git curl gcc make nasm python3-pil fonts-inter qemu-system-x86
+
+      - name: Generate smooth proportional font atlas
+        run: |
+          python3 tools/generate_font.py
+          test -s kernel/raster_font.h
+
+      - name: Prepare freestanding kernel template
+        run: |
+          git init _builder
+          git -C _builder fetch --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git 5284c9db6d5d5625f01040863e49d3e861698d03
+          git -C _builder checkout --detach FETCH_HEAD
+          test "$(git -C _builder rev-parse HEAD)" = "5284c9db6d5d5625f01040863e49d3e861698d03"
+          cp kernel/main.c _builder/kernel/src/main.c
+          cp kernel/font.h _builder/kernel/src/font.h
+          cp kernel/raster_font.h _builder/kernel/src/raster_font.h
+          cp kernel/ps2_mouse.h _builder/kernel/src/ps2_mouse.h
+          cp kernel/ramfs.h _builder/kernel/src/ramfs.h
+          cp kernel/pmm.h _builder/kernel/src/pmm.h
+          cp kernel/scheduler.h _builder/kernel/src/scheduler.h
+          cp kernel/pci.h _builder/kernel/src/pci.h
+          cp kernel/interrupts.h _builder/kernel/src/interrupts.h
+          cp kernel/idt.h _builder/kernel/src/idt.h
+          cp kernel/irq.S _builder/kernel/src/irq.S
+          cp kernel/rtc.h _builder/kernel/src/rtc.h
+          cp kernel/cpu.h _builder/kernel/src/cpu.h
+          cp kernel/ata.h _builder/kernel/src/ata.h
+          cp kernel/fat16.h _builder/kernel/src/fat16.h
+          cp kernel/vfs.h _builder/kernel/src/vfs.h
+          cp kernel/elf64.h _builder/kernel/src/elf64.h
+          cp kernel/process_image.h _builder/kernel/src/process_image.h
+          cp kernel/paging.h _builder/kernel/src/paging.h
+          cp kernel/user_space.h _builder/kernel/src/user_space.h
+          cp kernel/game_input.h _builder/kernel/src/game_input.h
+          cp kernel/capabilities.h _builder/kernel/src/capabilities.h
+          cp kernel/broker.h _builder/kernel/src/broker.h
+          cp kernel/user_buffer.h _builder/kernel/src/user_buffer.h
+          cp kernel/app_storage.h _builder/kernel/src/app_storage.h
+          cp limine.conf _builder/limine.conf
+
+      - name: Build x86-64 kernel and test ISO
+        run: |
+          make -C _builder TOOLCHAIN=llvm all
+          test -s _builder/template.iso
+          mv _builder/template.iso nova-os-native-x86_64-test.iso
+          sha256sum nova-os-native-x86_64-test.iso > nova-os-native-x86_64-test.iso.sha256
+
+      - name: QEMU serial boot smoke test
+        run: |
+          truncate -s 8M nova-test-disk.img
+          timeout 18s qemu-system-x86_64 -m 512 -vga std -cdrom nova-os-native-x86_64-test.iso \
+            -drive file=nova-test-disk.img,format=raw,if=ide,index=0,media=disk \
+            -boot d -display none -monitor none -serial file:nova-os-serial.log \
+            -d int,guest_errors -D nova-qemu-debug.log -no-reboot || test "$?" -eq 124
+          test -s nova-os-serial.log
+          grep -q NOVA_KERNEL_BOOT_OK nova-os-serial.log
+          grep -q NOVA_RAMFS_READY nova-os-serial.log
+          grep -q NOVA_PMM_READY nova-os-serial.log
+          grep -q NOVA_PMM_SELFTEST_OK nova-os-serial.log
+          grep -q NOVA_SCHED_SELFTEST_OK nova-os-serial.log
+          grep -q NOVA_PCI_INVENTORY_READY nova-os-serial.log
+          grep -q NOVA_IDT_PIT_READY nova-os-serial.log
+          grep -q NOVA_IRQ_HANDLER_CALLED nova-os-serial.log
+          grep -q NOVA_IRQ_SW_TEST_OK nova-os-serial.log
+          grep -q NOVA_IF_ENABLED nova-os-serial.log
+          grep -q NOVA_PIC_MASK_OK nova-os-serial.log
+          grep -q NOVA_CPU_READY nova-os-serial.log
+          grep -q NOVA_RTC_READY nova-os-serial.log
+          grep -q NOVA_RAMFS_SELFTEST_OK nova-os-serial.log
+          grep -q NOVA_ATA_PRIMARY_DETECTED nova-os-serial.log
+          grep -q NOVA_ATA_READ0_OK nova-os-serial.log
+          cat nova-os-serial.log
+
+      - name: Upload test ISO and verification files
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-os-native-test-iso
+          path: |
+            nova-os-native-x86_64-test.iso
+            nova-os-native-x86_64-test.iso.sha256
+            nova-os-serial.log
+            nova-qemu-debug.log
+          if-no-files-found: error
+          retention-days: 7
