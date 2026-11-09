@@ -55,6 +55,10 @@ int main(void){
     assert(!nova_idt_entry_build(&idt,handler,0x08u,8u,0x8Eu));
     assert(!nova_idt_entry_build(&idt,handler,0x08u,0u,0x0Eu));
     assert(!nova_idt_entry_build(&idt,handler,0x08u,0u,0x9Eu));
+    /* DPL 1, 2 and 3 gates must not become user-callable entry points. */
+    assert(!nova_idt_entry_build(&idt,handler,0x08u,0u,0xAEu));
+    assert(!nova_idt_entry_build(&idt,handler,0x08u,0u,0xCEu));
+    assert(!nova_idt_entry_build(&idt,handler,0x08u,0u,0xEEu));
     assert(!nova_idt_entry_build(&idt,handler,0x08u,0u,0x8Cu));
     assert(memcmp(&idt,&saved,sizeof(idt))==0);
     assert(nova_idt_entry_build(&idt,handler,0x08u,7u,0x8Fu));

@@ -23,7 +23,10 @@ _Static_assert(sizeof(struct nova_idt_entry)==16u,
 
 static inline bool nova_idt_gate_flags_valid(uint8_t flags){
     uint8_t type=(uint8_t)(flags&0x0Fu);
-    return (flags&0x80u)!=0u && (flags&0x10u)==0u &&
+    /* Kernel IDT gates stay DPL 0; user-callable software gates are
+     * intentionally unsupported until a separate ABI is designed.
+     */
+    return (flags&0x80u)!=0u && (flags&0x70u)==0u &&
            (type==0x0Eu || type==0x0Fu);
 }
 
