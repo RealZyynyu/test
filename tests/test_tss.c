@@ -48,6 +48,24 @@ int main(void){
     invalid=tss; invalid.iomap_base=0u;
     assert(!nova_tss_valid(&invalid));
 
+    /* Nonzero privilege-transition and IST stack tops must be aligned. */
+    invalid=tss; invalid.rsp0=UINT64_C(0x1001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist1=UINT64_C(0x2001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist2=UINT64_C(0x3001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist3=UINT64_C(0x4001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist4=UINT64_C(0x5001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist5=UINT64_C(0x6001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist6=UINT64_C(0x7001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist7=UINT64_C(0x8001);
+    assert(!nova_tss_valid(&invalid));
+
     /* Rejected updates must leave the complete TSS unchanged. */
     struct nova_tss64 before_invalid=tss;
     assert(!nova_tss_set_ist(NULL,1u,UINT64_C(0x1000)));

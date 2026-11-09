@@ -64,10 +64,21 @@ static inline bool nova_tss_set_ist(struct nova_tss64 *tss,
  * is intentionally absent: iomap_base must remain one byte beyond the
  * 104-byte TSS limit, and all architecturally reserved fields stay zero.
  */
+static inline bool nova_tss_stack_top_valid(uint64_t stack_top){
+    return stack_top==0u || (stack_top&15u)==0u;
+}
 static inline bool nova_tss_valid(const struct nova_tss64 *tss){
     return tss && tss->reserved0==0u && tss->reserved1==0u &&
            tss->reserved2==0u && tss->reserved3==0u &&
-           tss->iomap_base==sizeof(*tss);
+           tss->iomap_base==sizeof(*tss) &&
+           nova_tss_stack_top_valid(tss->rsp0) &&
+           nova_tss_stack_top_valid(tss->ist1) &&
+           nova_tss_stack_top_valid(tss->ist2) &&
+           nova_tss_stack_top_valid(tss->ist3) &&
+           nova_tss_stack_top_valid(tss->ist4) &&
+           nova_tss_stack_top_valid(tss->ist5) &&
+           nova_tss_stack_top_valid(tss->ist6) &&
+           nova_tss_stack_top_valid(tss->ist7);
 }
 
 struct nova_tss_descriptor {
