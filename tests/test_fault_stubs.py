@@ -30,7 +30,10 @@ class TestExceptionEntryContract(unittest.TestCase):
         for i in range(32):
             self.assertIn(f"extern void nova_exception_{i}(void);", code)
             self.assertRegex(code, rf"\bnova_exception_{i}\b")
-        self.assertIn("nova_idt_set(i,nova_cpu_exception_handlers[i]);", code)
+        self.assertIn(
+            "if(!nova_idt_set(i,nova_cpu_exception_handlers[i]))return false;",
+            code,
+        )
         self.assertIn("for(unsigned i=0;i<32;i++)", code)
 
     def test_fault_frame_and_serial_path_never_resume(self):

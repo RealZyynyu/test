@@ -7,15 +7,7 @@
 #define NOVA_INTERRUPTS_H
 #include <stdint.h>
 #include <stdbool.h>
-struct nova_idt_entry {
-    uint16_t offset_0_15;
-    uint16_t segment;
-    uint8_t ist;
-    uint8_t flags;
-    uint16_t offset_16_31;
-    uint32_t offset_32_63;
-    uint32_t reserved;
-} __attribute__((packed));
+#include "idt.h"
 struct nova_idtr {
     uint16_t limit;
     uint64_t address;
@@ -74,16 +66,10 @@ static void nova_interrupt_out(uint16_t port,uint8_t val){
 static inline void nova_interrupt_wait(void){
     nova_interrupt_out(0x80,0);
 }
-static void nova_idt_set(unsigned vec,void (*handler)(void)){
-    uintptr_t addr=(uintptr_t)handler;
-    struct nova_idt_entry *g=&nova_idt[vec];
-    g->offset_0_15=(uint16_t)addr;
-    g->segment=nova_kernel_cs; // Current Limine-provided kernel CS
-    g->ist=0;
-    g->flags=0x8e; // ring 0, present, 64-bit interrupt gate
-    g->offset_16_31=(uint16_t)(addr>>16);
-    g->offset_32_63=(uint32_t)(addr>>32);
-    g->reserved=0;
+static bool nova_idt_set(unsigned vec,void (*handler)(void)){
+    if(vec>=256u || !handler)return false;
+    return nova_idt_entry_build(&nova_idt[vec],(uintptr_t)handler,
+                                nova_kernel_cs,0u,0x8Eu);
 }
 static void nova_pic_remap(void){
     // Initialize 8259s and use offsets 32 and 40.
@@ -102,13 +88,20 @@ static void nova_pic_remap(void){
 static bool nova_interrupts_init(void){
     __asm__ volatile("cli");
     __asm__ volatile("mov %%cs, %0":"=r"(nova_kernel_cs));
-    for(unsigned i=0;i<256;i++)nova_idt_set(i,nova_exception_stub);
+    for(unsigned i=0;i<256;i++)
+        if(!nova_idt_set(i,nova_exception_stub))return false;
     /* Every architecturally defined CPU exception has its own stub.
        Error-code exceptions do not receive a duplicate synthetic code. */
-    for(unsigned i=0;i<32;i++)nova_idt_set(i,nova_cpu_exception_handlers[i]);
-    for(unsigned i=32;i<40;i++)nova_idt_set(i,nova_irq_master_stub);
-    for(unsigned i=40;i<48;i++)nova_idt_set(i,nova_irq_slave_stub);
-    nova_idt_set(32,nova_irq_timer_stub);
+    for(unsigned i=0;i<32;i++)
+        if(!nova_idt_set(i,nova_cpu_exception_handlers[i]))return false;
+    for(unsigned i=32;i<40;i++)
+        if(!nova_idt_set(i,nova_irq_master_stub))return false;
+    for(unsigned i=40;i<48;i++)
+        if(!nova_idt_set(i,nova_irq_slave_stub))return false;
+    if(!nova_idt_set(32,nova_irq_timer_stub))return false;
+    /* Validate the complete candidate table before making it active. */
+    for(unsigned i=0;i<256;i++)
+        if(!nova_idt_entry_valid(&nova_idt[i]))return false;
     nova_idtr_data.limit=sizeof(nova_idt)-1;
     nova_idtr_data.address=(uint64_t)(uintptr_t)&nova_idt[0];
     __asm__ volatile("lidt %0"::"m"(nova_idtr_data):"memory");
