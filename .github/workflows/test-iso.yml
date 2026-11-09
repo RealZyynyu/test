@@ -48,6 +48,7 @@ jobs:
           cp kernel/scheduler.h _builder/kernel/src/scheduler.h
           cp kernel/pci.h _builder/kernel/src/pci.h
           cp kernel/interrupts.h _builder/kernel/src/interrupts.h
+          cp kernel/fault.h _builder/kernel/src/fault.h
           cp kernel/idt.h _builder/kernel/src/idt.h
           cp kernel/irq.S _builder/kernel/src/irq.S
           cp kernel/rtc.h _builder/kernel/src/rtc.h
