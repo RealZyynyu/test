@@ -27,7 +27,11 @@ jobs:
           test -s kernel/raster_font.h
       - name: Prepare freestanding kernel template
         run: |
-          git clone --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git _builder
+          # Pin the boot template so linker layout and boot assumptions are reproducible.
+          git init _builder
+          git -C _builder fetch --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git 5284c9db6d5d5625f01040863e49d3e861698d03
+          git -C _builder checkout --detach FETCH_HEAD
+          test "$(git -C _builder rev-parse HEAD)" = "5284c9db6d5d5625f01040863e49d3e861698d03"
           cp kernel/main.c _builder/kernel/src/main.c
           cp kernel/font.h _builder/kernel/src/font.h
           cp kernel/raster_font.h _builder/kernel/src/raster_font.h
