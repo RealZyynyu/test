@@ -69,6 +69,26 @@ class TestNativeSafetyDefaults(unittest.TestCase):
             r"(?:wrmsr|ltr)\s*[;\n])"
         )
 
+    def test_interrupt_assembly_stays_kernel_only(self):
+        assembly = self.text("kernel/irq.S")
+        # Until a separately reviewed privilege-transition path exists, the
+        # IRQ/exception entry file must not load TR, switch GS, or return via
+        # SYSRET. CR3 writes would activate candidate address spaces.
+        self.assertNotRegex(
+            assembly,
+            r"(?im)^\\s*(?:sysretq|swapgs|ltr|wrmsr)\\b",
+        )
+        self.assertNotRegex(
+            assembly,
+            r"(?im)^\\s*movq?\\s+[^,\\n]+,\\s*%cr3\\b",
+        )
+        # These are the three existing ring-0 IRQ return paths. A new IRET
+        # site needs explicit review because IRET can also enter ring 3.
+        self.assertEqual(
+            len(re.findall(r"(?im)^\\s*iretq\\b", assembly)),
+            3,
+        )
+
     def test_staged_apps_default_deny_and_never_modify_disk(self):
         caps = self.text("kernel/capabilities.h")
         main = self.text("kernel/main.c")
