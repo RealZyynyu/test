@@ -76,16 +76,16 @@ class TestNativeSafetyDefaults(unittest.TestCase):
         # SYSRET. CR3 writes would activate candidate address spaces.
         self.assertNotRegex(
             assembly,
-            r"(?im)^\\s*(?:sysretq|swapgs|ltr|wrmsr)\\b",
+            r"(?im)^\s*(?:sysretq|swapgs|ltr|wrmsr)\b",
         )
         self.assertNotRegex(
             assembly,
-            r"(?im)^\\s*movq?\\s+[^,\\n]+,\\s*%cr3\\b",
+            r"(?im)^\s*movq?\s+[^,\n]+,\s*%cr3\b",
         )
         # These are the three existing ring-0 IRQ return paths. A new IRET
         # site needs explicit review because IRET can also enter ring 3.
         self.assertEqual(
-            len(re.findall(r"(?im)^\\s*iretq\\b", assembly)),
+            len(re.findall(r"(?im)^\s*iretq\b", assembly)),
             3,
         )
 
