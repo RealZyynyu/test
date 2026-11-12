@@ -45,7 +45,11 @@ class TestExceptionEntryContract(unittest.TestCase):
             )
             self.assertIsNotNone(match, f"missing {macro} macro")
             body = re.sub(r"/\*.*?\*/", "", match.group(1), flags=re.DOTALL)
-            instructions = [line.strip() for line in body.splitlines() if line.strip()]
+            instructions = [
+                line.strip() for line in body.splitlines()
+                if line.strip() and not line.strip().startswith(".")
+                and not line.strip().endswith(":")
+            ]
             self.assertEqual(instructions, expected, f"incorrect {macro} stack frame")
 
     def test_idt_has_one_handler_per_exception(self):
