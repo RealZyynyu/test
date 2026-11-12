@@ -30,21 +30,21 @@ class TestExceptionEntryContract(unittest.TestCase):
         expected_instructions = {
             "NOVA_EXC_NOERR": [
                 "pushq $0",
-                r"pushq $\\n",
+                r"pushq $\n",
                 "jmp nova_exception_common",
             ],
             "NOVA_EXC_ERR": [
-                r"pushq $\\n",
+                r"pushq $\n",
                 "jmp nova_exception_common",
             ],
         }
         for macro, expected in expected_instructions.items():
             match = re.search(
-                rf"(?ms)^\\.macro {macro} n\\s*\\n(.*?)^\\.endm\\s*$",
+                rf"(?ms)^\.macro {macro} n\s*\n(.*?)^\.endm\s*$",
                 assembly,
             )
             self.assertIsNotNone(match, f"missing {macro} macro")
-            body = re.sub(r"/\\*.*?\\*/", "", match.group(1), flags=re.DOTALL)
+            body = re.sub(r"/\*.*?\*/", "", match.group(1), flags=re.DOTALL)
             instructions = [line.strip() for line in body.splitlines() if line.strip()]
             self.assertEqual(instructions, expected, f"incorrect {macro} stack frame")
 
