@@ -52,6 +52,36 @@ class TestExceptionEntryContract(unittest.TestCase):
             ]
             self.assertEqual(instructions, expected, f"incorrect {macro} stack frame")
 
+    def test_fault_metadata_matches_assembly_error_code_stubs(self):
+        # The C diagnostic helper and assembly entry macros must agree about
+        # which CPU exceptions arrive with an error code on the stack.
+        fault = (ROOT / "kernel/fault.h").read_text()
+        match = re.search(
+            r"static inline bool nova_fault_has_cpu_error\\(unsigned vector\\)\\s*\\{(.*?)\\n\\}",
+            fault,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match, "missing CPU error-code metadata helper")
+        c_vectors = {
+            int(number) for number in re.findall(
+                r"case\\s+(\\d+)\\s*:", match.group(1)
+            )
+        }
+        assembly = (ROOT / "kernel/irq.S").read_text()
+        stubs = re.findall(
+            r"^NOVA_EXC_(NOERR|ERR)\\s+(\\d+)$",
+            assembly,
+            flags=re.MULTILINE,
+        )
+        assembly_vectors = {
+            int(number) for kind, number in stubs if kind == "ERR"
+        }
+        self.assertEqual(
+            c_vectors,
+            assembly_vectors,
+            "C fault metadata disagrees with the assembly stack layout",
+        )
+
     def test_idt_has_one_handler_per_exception(self):
         code = (ROOT / "kernel/interrupts.h").read_text()
         for i in range(32):
