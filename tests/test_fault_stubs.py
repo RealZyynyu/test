@@ -57,19 +57,19 @@ class TestExceptionEntryContract(unittest.TestCase):
         # which CPU exceptions arrive with an error code on the stack.
         fault = (ROOT / "kernel/fault.h").read_text()
         match = re.search(
-            r"static inline bool nova_fault_has_cpu_error\\(unsigned vector\\)\\s*\\{(.*?)\\n\\}",
+            r"static inline bool nova_fault_has_cpu_error\(unsigned vector\)\s*\{(.*?)\n\}",
             fault,
             flags=re.DOTALL,
         )
         self.assertIsNotNone(match, "missing CPU error-code metadata helper")
         c_vectors = {
             int(number) for number in re.findall(
-                r"case\\s+(\\d+)\\s*:", match.group(1)
+                r"case\s+(\d+)\s*:", match.group(1)
             )
         }
         assembly = (ROOT / "kernel/irq.S").read_text()
         stubs = re.findall(
-            r"^NOVA_EXC_(NOERR|ERR)\\s+(\\d+)$",
+            r"^NOVA_EXC_(NOERR|ERR)\s+(\d+)$",
             assembly,
             flags=re.MULTILINE,
         )
