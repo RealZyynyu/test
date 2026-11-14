@@ -20,10 +20,32 @@ _Static_assert(sizeof(struct nova_fault_frame)==20u*8u,
                "Incorrect kernel fault frame layout");
 _Static_assert(offsetof(struct nova_fault_frame,r15)==0u,
                "Fault R15 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r14)==8u,
+               "Fault R14 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r13)==16u,
+               "Fault R13 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r12)==24u,
+               "Fault R12 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r11)==32u,
+               "Fault R11 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r10)==40u,
+               "Fault R10 offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,r9)==48u,
+               "Fault R9 offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,r8)==56u,
                "Fault R8 offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,rdi)==64u,
                "Fault RDI offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rsi)==72u,
+               "Fault RSI offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rbp)==80u,
+               "Fault RBP offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rdx)==88u,
+               "Fault RDX offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rcx)==96u,
+               "Fault RCX offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rbx)==104u,
+               "Fault RBX offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,rax)==112u,
                "Fault RAX offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,vector)==120u,
@@ -32,6 +54,10 @@ _Static_assert(offsetof(struct nova_fault_frame,error_code)==128u,
                "Fault error-code offset changed");
 _Static_assert(offsetof(struct nova_fault_frame,rip)==136u,
                "Fault RIP offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,cs)==144u,
+               "Fault CS offset changed");
+_Static_assert(offsetof(struct nova_fault_frame,rflags)==152u,
+               "Fault RFLAGS offset changed");
 
 static inline bool nova_fault_has_cpu_error(unsigned vector){
     switch(vector){
