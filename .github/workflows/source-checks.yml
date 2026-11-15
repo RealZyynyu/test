@@ -191,7 +191,11 @@ jobs:
         run: python3 tools/generate_font.py
       - name: Get upstream freestanding headers
         run: |
-          git clone --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git _kernel_builder
+          # Match the final-build template revision without creating an ISO.
+          git init _kernel_builder
+          git -C _kernel_builder fetch --depth=1 https://github.com/Limine-Bootloader/limine-c-template-x86-64.git 5284c9db6d5d5625f01040863e49d3e861698d03
+          git -C _kernel_builder checkout --detach FETCH_HEAD
+          test "$(git -C _kernel_builder rev-parse HEAD)" = "5284c9db6d5d5625f01040863e49d3e861698d03"
           cd _kernel_builder
           ./kernel/get-deps
       - name: Copy native NOVA kernel source
