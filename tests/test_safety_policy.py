@@ -16,11 +16,14 @@ class TestNativeSafetyDefaults(unittest.TestCase):
 
     def test_iso_requires_explicit_manual_confirmation(self):
         workflow = self.text(".github/workflows/build-native-iso.yml")
-        self.assertIn("workflow_dispatch:", workflow)
+        trigger_block = workflow.split("on:", 1)[1].split("permissions:", 1)[0]
+        trigger_names = re.findall(r"(?m)^  ([A-Za-z_][A-Za-z0-9_-]*):\\s*$", trigger_block)
+        self.assertEqual(trigger_names, ["workflow_dispatch"])
         self.assertIn("final_release:", workflow)
+        self.assertRegex(workflow, r"(?m)^        required:\\s*true\\s*$")
+        self.assertRegex(workflow, r"(?m)^        type:\\s*boolean\\s*$")
         self.assertIn("default: false", workflow)
-        self.assertRegex(workflow, r"if:\s*\$\{\{\s*inputs\.final_release == true\s*\}\}")
-        self.assertNotRegex(workflow, r"(?m)^\s{2}(push|pull_request|schedule):")
+        self.assertRegex(workflow, r"if:\\s*\\$\\{\\{\\s*inputs\\.final_release == true\\s*\\}\\}")
 
     def test_test_iso_workflow_remains_removed(self):
         # Routine development must stay source-only; test images are not
