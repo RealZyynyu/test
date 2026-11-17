@@ -299,7 +299,7 @@ static void bar(void){
 
 
 static void appicon(int x,int y,int i,int selected){
-    static const uint32_t cols[]={0x607FC8,0x477FAF,0xB18B54,0x7568B7,0x647A9E,0x566FAD};
+    static const uint32_t cols[]={0x607FC8,0x477FAF,0xB18B54,0x7568B7,0x647A9E,0x566FAD,0x3D465B};
     int w=58;
     /* Unified indigo tile language; app glyphs remain individually recognizable. */
     roundrect(x+2,y+5,w,w,14,night?0x141A30:0x8995B3);
@@ -329,9 +329,16 @@ static void appicon(int x,int y,int i,int selected){
         circle(x+29,y+29,20,20,0xF5F8FB);
         circle(x+29,y+29,14,14,0x8993AA);
         circle(x+29,y+29,8,8,0xDFE6F1);
-    }else{
+    }else if(i==5){
         circle(x+29,y+29,19,19,0xF4F6FF);
         text(x+24,y+20,"I",3,0x526C9A);
+    }else{
+        roundrect(x+10,y+14,38,30,6,0xE8EDF5);
+        rect(x+10,y+22,38,2,0x8A9AB4);
+        circle(x+17,y+18,2,2,0xE96C69);
+        circle(x+24,y+18,2,2,0xE7B85B);
+        circle(x+31,y+18,2,2,0x65B987);
+        text(x+18,y+29,">_",1,0x34435B);
     }
     if(selected){
         roundrect(x+22,y+67,14,3,2,night?0xD8D9FF:0x475D99);
@@ -343,7 +350,7 @@ static void dock(void){
     roundrect(313,693,653,85,20,night?0x2D3559:0xE4E9FA);
     alpha_rect(313,694,653,83,night?0xCBD5EF:0xFFFFFF,night?60:82);
     rect(326,695,627,2,night?0x66709A:0xFFFFFF);
-    for(int i=0;i<6;i++)appicon(346+i*101,704,i,i==screen);
+    for(int i=0;i<7;i++)appicon(354+i*82,704,i,i==screen);
 }
 
 
@@ -1284,7 +1291,7 @@ static void open_app(int app){
 static void mouse_click(int x,int y){
     // Floating dock.
     if(y>=694&&y<=780){
-        for(int i=0;i<6;i++)if(x>=341+i*101 && x<=410+i*101){
+        for(int i=0;i<7;i++)if(x>=349+i*82 && x<=415+i*82){
             open_app(i);return;
         }
     }
