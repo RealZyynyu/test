@@ -379,7 +379,7 @@ static void window_draw(void){
     text(480,99,apps[screen],2,night?0xEDF3FF:0x273248);
     rect(156,134,947,1,night?0x454D68:0xE4E9F0);
     rect(156,135,208,499,night?0x2E354C:0xE8EBF4);
-    // Sidebar: Finder-like navigation, sections and colored location dots.
+    // Sidebar: grouped app shortcuts plus the real in-memory location.
     text(175,155,"FAVORITES",1,night?0x9DACCA:0x929BAB);
     const char *nav[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT"};
     static const uint32_t hue[]={0x7F9FE6,0x57A8F1,0xE9B85A,0x9788E6,0x94ABC7,0x7A95C6};
@@ -390,16 +390,26 @@ static void window_draw(void){
         text(179,y+7,i==3?"+":" ",1,0xFFFFFF);
         text(205,y+8,nav[i],1,screen==i?(night?0xFFFFFF:0x253451):(night?0xCFD6E8:0x5A6376));
     }
-    text(174,559,"TOOLS",1,night?0x9DACCA:0x929BAB);
-    circle(181,589,6,6,0x6AA6EC);
-    text(198,586,"TERMINAL  [7]",1,night?0xD9E0F2:0x6A7488);
-    // Toolbar divider and understated chrome.
+    text(174,526,"LOCATIONS",1,night?0x9DACCA:0x929BAB);
+    roundrect(171,541,13,11,3,night?0x6F9BD4:0x6C9EDB);
+    rect(173,538,7,5,night?0x8DB7EA:0x8BB9EB);
+    text(198,542,"RAM DISK",1,night?0xD9E0F2:0x53627E);
+    text(198,555,"VOLATILE",1,night?0x9DACCA:0x929BAB);
+    text(174,583,"UTILITIES",1,night?0x9DACCA:0x929BAB);
+    circle(181,611,6,6,0x6AA6EC);
+    text(198,608,"TERMINAL  [7]",1,night?0xD9E0F2:0x6A7488);
+    // Toolbar: distinct navigation controls, location breadcrumb and search field.
     rect(364,135,1,499,night?0x47536D:0xDBE0EB);
     rect(365,135,738,42,night?0x292F49:0xFDFEFF);
-    text(387,148,"<    >",2,night?0xABBDDE:0x8C9CAE);
+    roundrect(382,142,34,28,7,night?0x3B4862:0xEDF0F6);
+    roundrect(421,142,34,28,7,night?0x3B4862:0xEDF0F6);
+    text(394,149,"<",2,night?0xD5DFF2:0x52627C);
+    text(433,149,">",2,night?0xD5DFF2:0x52627C);
+    roundrect(469,142,331,28,8,night?0x343E59:0xF0F3F8);
+    text(484,153,screen==1?"HOME  /  RAM DISK":"WORKSPACE",1,night?0xD5DFF2:0x52627C);
     roundrect(828,142,249,28,9,night?0x3B4862:0xEDF0F6);
     circle(847,156,6,6,night?0xB4C0D1:0x8B9BAB);
-    text(864,153,"Search",1,night?0xB4C0D1:0x8B9BAB);
+    text(864,153,screen==1?"Search files":"Search",1,night?0xB4C0D1:0x8B9BAB);
     rect(365,177,738,1,night?0x47536D:0xEFF1F7);
 }
 static void file_icon(int x,int y){
@@ -417,8 +427,8 @@ static void app_content(void){
     uint32_t fg=ink(),secondary=sub();
     uint32_t pale=night?0x323E59:0xF3F6FB;
     if(screen==1){
-        text(397,194,"NOVA FILES",2,fg);
-        text(397,229,"RAM DISK   /   HOME   -   VOLATILE STORAGE",1,secondary);
+        text(397,194,"Browse Files",2,fg);
+        text(397,229,"HOME   /   RAM DISK   -   VOLATILE STORAGE",1,secondary);
         rect(394,253,678,1,night?0x3D4661:0xE8ECF2);
         if(file_open<0){
             for(int index=0;index<8;index++){
@@ -1321,7 +1331,7 @@ static void mouse_click(int x,int y){
         int yy=181+i*57;
         if(x>=164&&x<=356 && y>=yy-7&&y<=yy+33){open_app(i);return;}
     }
-    if(x>=169&&x<=355&&y>=570&&y<=613){open_app(6);return;}
+    if(x>=169&&x<=355&&y>=596&&y<=628){open_app(6);return;}
     if(screen==4&&y>=336&&y<=510){
         if(x>=423&&x<=722)night=0;
         if(x>=742&&x<=1041)night=1;
