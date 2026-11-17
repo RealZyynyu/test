@@ -31,6 +31,20 @@ struct nova_gdtr {
 _Static_assert(sizeof(struct nova_gdt)==56u,"GDT size mismatch");
 _Static_assert(sizeof(struct nova_gdtr)==10u,"GDTR size mismatch");
 _Static_assert(offsetof(struct nova_gdt,tss)==40u,"TSS GDT slot mismatch");
+_Static_assert(NOVA_GDT_KERNEL_CODE_SELECTOR==(1u<<3),
+               "kernel code selector must address GDT slot 1");
+_Static_assert(NOVA_GDT_KERNEL_DATA_SELECTOR==(2u<<3),
+               "kernel data selector must address GDT slot 2");
+_Static_assert(NOVA_GDT_USER_DATA_SELECTOR==((3u<<3)|3u),
+               "user data selector must address GDT slot 3 at RPL 3");
+_Static_assert(NOVA_GDT_USER_CODE_SELECTOR==((4u<<3)|3u),
+               "user code selector must address GDT slot 4 at RPL 3");
+_Static_assert(NOVA_GDT_TSS_SELECTOR==(5u<<3),
+               "TSS selector must address GDT slot 5");
+_Static_assert(offsetof(struct nova_gdt,tss)==NOVA_GDT_TSS_SELECTOR,
+               "TSS selector and descriptor offset must agree");
+_Static_assert(sizeof(struct nova_gdt)/sizeof(uint64_t)==NOVA_GDT_ENTRIES,
+               "GDT entry count must include both TSS descriptor slots");
 
 /* Flat 4-GiB data and 64-bit code segments. Long-mode code descriptors use
  * L=1, D=0; data descriptors use L=0. User selectors carry RPL=3.
