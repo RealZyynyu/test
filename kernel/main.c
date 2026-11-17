@@ -402,12 +402,16 @@ static void window_draw(void){
     text(864,153,"Search",1,night?0xB4C0D1:0x8B9BAB);
     rect(365,177,738,1,night?0x47536D:0xEFF1F7);
 }
-static void folder(int x,int y,const char *name){
-    roundrect(x,y+18,91,66,11,0x5897DA);
-    roundrect(x,y+9,48,22,8,0x73B5F1);
-    roundrect(x+1,y+23,89,59,9,0x6EB4F1);
-    roundrect(x+7,y+27,77,49,7,0x90C9F7);
-    text(x+2,y+94,name,1,night?0xE6EDFC:0x475872);
+static void file_icon(int x,int y){
+    /* Finder-style document tile for the RAM-backed virtual files. */
+    roundrect(x+3,y+4,54,64,7,night?0x151E31:0xD5DCE9);
+    roundrect(x,y,54,64,7,night?0xE1E8F5:0xFFFFFF);
+    rect(x+1,y+8,52,3,night?0x758EC5:0x6E91D4);
+    rect(x+10,y+21,34,2,night?0x8998B5:0xB9C4D5);
+    rect(x+10,y+29,29,2,night?0x8998B5:0xB9C4D5);
+    rect(x+10,y+37,34,2,night?0x8998B5:0xB9C4D5);
+    roundrect(x+10,y+46,24,11,4,night?0x3D5688:0xE7EFFB);
+    text(x+15,y+48,"TXT",1,night?0xE4ECFC:0x496A9F);
 }
 static void app_content(void){
     uint32_t fg=ink(),secondary=sub();
@@ -422,7 +426,7 @@ static void app_content(void){
                 if(slot<0)continue;
                 int x=400+(index%4)*165, y=266+(index/4)*119;
                 roundrect(x,y,153,114,13,pale);
-                folder(x+32,y-2,"");
+                file_icon(x+49,y+7);
                 text(x+9,y+88,nova_files[slot].name,1,fg);
                 text(x+9,y+101,"RAM FILE",1,secondary);
             }
