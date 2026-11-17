@@ -158,7 +158,7 @@ static void number(int x,int y,unsigned int n,int scale,uint32_t c){
     text(x,y,buf,scale,c);
 }
 
-static int night=1;
+static int night=0;
 static char note[74]="HELLO FROM NOVA!";
 static unsigned int note_length=16;
 static const char *apps[]={"WELCOME","FINDER","NOTES","ARCADE","SETTINGS","ABOUT","TERMINAL"};
@@ -219,32 +219,29 @@ static uint32_t mix(uint32_t a,uint32_t b,int t,int steps){
 }
 
 static void wallpaper(void){
-    /* NOVA cosmic desktop: original procedural space artwork, no external assets. */
-    const uint32_t deep=0x070B18;
-    const uint32_t upper=0x10142D;
-    for(int y=0;y<800;y+=2)rect(0,y,1280,2,mix(deep,upper,y,800));
+    /* Original soft blue-violet abstract desktop artwork. */
+    const uint32_t sky=0xDCEBFF;
+    const uint32_t lower=0x7186D0;
+    for(int y=0;y<800;y+=2)
+        rect(0,y,1280,2,mix(sky,lower,y,800));
 
-    /* Soft nebula bands, kept deliberately dark behind windows and text. */
-    circle(770,170,610,300,0x17163B);
-    circle(930,155,440,230,0x22205A);
-    circle(1090,120,270,160,0x302568);
-    circle(330,365,430,220,0x111C3B);
-    circle(560,405,320,170,0x151D48);
+    /* Broad overlapping forms create a calm, macOS-like layered backdrop. */
+    circle(940,205,690,340,0xC4D8FA);
+    circle(1110,275,560,285,0xAAB8F0);
+    circle(1030,390,465,245,0x7D86D6);
+    circle(710,490,650,260,0x9AA9E7);
+    circle(355,540,520,250,0xC4C9F4);
+    circle(1000,690,850,310,0x596FB9);
+    circle(530,790,720,250,0x7185CD);
 
-    /* Deterministic star field: stable between redraws and inexpensive. */
-    for(int i=0;i<74;i++){
+    /* Restrained highlights add depth without competing with app windows. */
+    circle(1010,160,245,120,0xE4EDFF);
+    circle(260,325,190,90,0xD7E2FC);
+    for(int i=0;i<34;i++){
         int sx=(i*197+53)%1280;
-        int sy=(i*113+29)%690;
-        uint32_t star=(i%9==0)?0xB7B9FF:((i%4==0)?0x687CCB:0x35466F);
-        rect(sx,sy,(i%9==0)?2:1,(i%9==0)?2:1,star);
+        int sy=(i*113+29)%660;
+        if(i%4==0)circle(sx,sy,2,2,0xEAF0FF);
     }
-
-    /* Distant blue-violet planetary horizon along the lower edge. */
-    circle(710,1005,1040,520,0x182653);
-    circle(700,1018,900,440,0x253C79);
-    circle(690,1034,760,360,0x344D91);
-    circle(680,1050,630,280,0x111A38);
-    rect(0,692,1280,2,0x526BC1);
 }
 static void alpha_rect(int x,int y,int w,int h,uint32_t rgb,int a){
     if(a<=0)return; if(a>=255){rect(x,y,w,h,rgb);return;}
