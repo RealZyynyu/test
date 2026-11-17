@@ -346,8 +346,15 @@ static void dock(void){
     roundrect(307,688,665,96,23,night?0x8B8DB9:0x9DA8D1);
     roundrect(313,693,653,85,20,night?0x2D3559:0xE4E9FA);
     alpha_rect(313,694,653,83,night?0xCBD5EF:0xFFFFFF,night?60:82);
+    /* Fine glass rim and top reflection keep the Dock distinct from the desktop. */
+    roundrect(313,693,653,85,20,night?0x596487:0xC8D2E7);
+    roundrect(315,695,649,81,18,night?0x2D3559:0xE4E9FA);
+    alpha_rect(316,696,647,79,night?0xCBD5EF:0xFFFFFF,night?60:82);
     rect(326,695,627,2,night?0x66709A:0xFFFFFF);
     for(int i=0;i<7;i++)appicon(354+i*82,704,i,i==screen);
+    /* Separate the command-line utility from the everyday app group. */
+    rect(835,710,1,51,night?0x687493:0xB7C1D5);
+    rect(836,710,1,51,night?0x202A46:0xFFFFFF);
 }
 
 
