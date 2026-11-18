@@ -78,7 +78,8 @@ static bool nova_file_write(const char *name,const char *data,size_t length){
 static bool nova_file_delete(const char *name){
     struct nova_file *f=nova_file_find(name);
     if(!f||f->protected)return false;
-    f->used=false;f->size=0;f->name[0]=0;f->data[0]=0;
+    for(size_t i=0;i<NOVA_FILE_DATA_CAP;i++)f->data[i]=0;
+    f->used=false;f->size=0;f->name[0]=0;
     return true;
 }
 static bool nova_ramfs_self_test(void){
