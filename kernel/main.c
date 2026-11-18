@@ -446,10 +446,18 @@ static void app_content(void){
             text(894,526,"PREV",1,fg);            roundrect(966,518,89,34,9,pale);
             text(989,526,"NEXT",1,fg);
         }else{
-            text(408,271,"< BACK",2,night?0xD4E5FF:0x427BC6);
-            text(413,322,nova_files[file_open].name,2,fg);
-            roundrect(406,360,654,155,12,pale);
-            text(424,394,nova_files[file_open].data,1,fg);
+            roundrect(406,265,88,31,8,pale);
+            text(419,275,"< BACK",1,night?0xD4E5FF:0x427BC6);
+            text(514,276,"QUICK LOOK",1,secondary);
+            text(408,318,nova_files[file_open].name,2,fg);
+            text(408,341,"RAM DISK  /  VOLATILE FILE",1,secondary);
+            rect(406,356,654,1,night?0x3D4661:0xE8ECF2);
+            roundrect(406,367,654,148,12,pale);
+            roundrect(424,380,618,118,8,night?0x1B2439:0xFFFFFF);
+            rect(424,380,618,3,night?0x6E8DCB:0x84A8E8);
+            text(444,397,"FILE CONTENT",1,secondary);
+            rect(444,416,578,1,night?0x424F69:0xE7EBF2);
+            text(444,433,nova_files[file_open].data,1,fg);
             text(408,541,"FILES ONLY EXIST IN RAM. REBOOT ERASES CHANGES.",1,secondary);
         }
         roundrect(396,571,672,36,9,pale);
@@ -1338,7 +1346,7 @@ static void mouse_click(int x,int y){
     }
     if(screen==1){
         if(file_open>=0){
-            if(x>=390&&x<545&&y>=265&&y<322)file_open=-1;
+            if(x>=406&&x<494&&y>=265&&y<296)file_open=-1;
             return;
         }
         if(y>=518&&y<=560){
