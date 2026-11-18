@@ -530,7 +530,7 @@ static void app_content(void){
         text(421,575,"Press T or select a preview to switch.",1,secondary);
     }else if(screen==5){
         text(398,191,"ABOUT THIS NOVA",2,fg);
-        text(399,230,"An independent operating system project.",1,secondary);
+        text(399,230,"NOVA OS 0.1  -  INDEPENDENT OS PROJECT",1,secondary);
         roundrect(396,260,673,327,17,pale);
         roundrect(422,293,74,74,17,0x5B8BE0);
         circle(459,330,24,24,0xE5F0FE);
