@@ -1511,8 +1511,8 @@ void kmain(void){
         if(nova_kernel_gdtr.limit==sizeof(nova_kernel_gdt)-1u &&
            nova_kernel_gdtr.base==(uint64_t)(uintptr_t)&nova_kernel_gdt)
             serial_log("NOVA_GDT_TSS_CANDIDATE_READY_NOT_LOADED\n");
-        else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\\n");
-    }else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\\n");
+        else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\n");
+    }else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\n");
     char boot_clock[20];
     if(nova_clock_string(boot_clock))serial_log("NOVA_RTC_READY\n");
     else serial_log("NOVA_RTC_UNAVAILABLE\n");
