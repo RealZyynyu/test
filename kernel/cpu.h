@@ -18,6 +18,8 @@ static void nova_cpuid(uint32_t leaf,uint32_t sub,
                      "a"(leaf),"c"(sub));
 }
 static bool nova_cpu_detect(void){
+    /* Detection may be called again; never retain features from an earlier scan. */
+    nova_cpu=(struct nova_cpu_info){0};
     uint32_t a,b,c,d;
     nova_cpuid(0,0,&a,&b,&c,&d);
     nova_cpu.max_basic_leaf=a;
