@@ -993,6 +993,8 @@ static void shell_execute(void){
         char v[100]="CPU: ";
         nova_append_text(v,sizeof(v),nova_cpu.vendor);
         nova_append_text(v,sizeof(v),nova_cpu.hypervisor?" (VM)":" (NATIVE)");
+        nova_append_text(v,sizeof(v),nova_cpu.vmx?" VMX:ADVERTISED":" VMX:NO");
+        nova_append_text(v,sizeof(v),nova_cpu.svm?" SVM:ADVERTISED":" SVM:NO");
         shell_result(v);
     }
     else if(nova_file_equal(shell_input,"STAT"))
