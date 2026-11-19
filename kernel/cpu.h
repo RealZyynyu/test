@@ -6,6 +6,9 @@
 struct nova_cpu_info {
     char vendor[13];
     bool long_mode, sse2, apic, xsave, hypervisor;
+    /* Hardware virtualization features advertised by CPUID only.
+       These flags do not enable VMX/SVM or prove firmware permits their use. */
+    bool vmx, svm;
     uint32_t max_basic_leaf;
 };
 static struct nova_cpu_info nova_cpu;
@@ -22,17 +25,21 @@ static bool nova_cpu_detect(void){
     for(unsigned i=0;i<12;i++)
         nova_cpu.vendor[i]=(char)(vendor[i/4]>>(8*(i%4)));
     nova_cpu.vendor[12]=0;
+    nova_cpu.vmx=false;
+    nova_cpu.svm=false;
     if(a>=1){
         nova_cpuid(1,0,&a,&b,&c,&d);
         nova_cpu.sse2=(d&(1u<<26))!=0;
         nova_cpu.apic=(d&(1u<<9))!=0;
         nova_cpu.xsave=(c&(1u<<26))!=0;
         nova_cpu.hypervisor=(c&(1u<<31))!=0;
+        nova_cpu.vmx=(c&(1u<<5))!=0;
     }
     nova_cpuid(0x80000000u,0,&a,&b,&c,&d);
     if(a>=0x80000001u){
         nova_cpuid(0x80000001u,0,&a,&b,&c,&d);
         nova_cpu.long_mode=(d&(1u<<29))!=0;
+        nova_cpu.svm=(c&(1u<<2))!=0;
     }
     return nova_cpu.vendor[0]!=0&&nova_cpu.long_mode;
 }
