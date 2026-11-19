@@ -1510,7 +1510,7 @@ void kmain(void){
         nova_gdtr_build(&nova_kernel_gdtr,&nova_kernel_gdt);
         if(nova_kernel_gdtr.limit==sizeof(nova_kernel_gdt)-1u &&
            nova_kernel_gdtr.base==(uint64_t)(uintptr_t)&nova_kernel_gdt)
-            serial_log("NOVA_GDT_TSS_CANDIDATE_READY_NOT_LOADED\\n");
+            serial_log("NOVA_GDT_TSS_CANDIDATE_READY_NOT_LOADED\n");
         else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\\n");
     }else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\\n");
     char boot_clock[20];
