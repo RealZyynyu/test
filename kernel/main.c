@@ -15,6 +15,7 @@
 #include "fault.h"
 #include "rtc.h"
 #include "cpu.h"
+#include "gdt.h"
 #include "ata.h"
 #include "fat16.h"
 #include "vfs.h"
@@ -178,6 +179,11 @@ static const struct nova_broker_context nova_kernel_broker={
 };
 /* OFFLINE: never activated via CR3. Missing all kernel mappings. */
 static struct nova_user_space nova_user_spaces[NOVA_PROCESS_SLOTS];
+/* Candidate privilege tables are validated at boot but deliberately NOT loaded.
+ * RSP0 and IST remain zero until dedicated mapped kernel stacks exist. */
+static struct nova_tss64 nova_kernel_tss;
+static struct nova_gdt nova_kernel_gdt;
+static struct nova_gdtr nova_kernel_gdtr;
 
 static char shell_input[64]="";
 static unsigned shell_len=0;
@@ -1496,6 +1502,17 @@ void kmain(void){
     }
     if(nova_cpu_detect())serial_log("NOVA_CPU_READY\n");
     else serial_log("NOVA_CPU_UNAVAILABLE\n");
+    /* Validate future ring-transition tables without replacing Limine's
+       active GDT or loading TR. No user-mode entry is enabled here. */
+    if(nova_tss_init(&nova_kernel_tss) &&
+       nova_gdt_build(&nova_kernel_gdt,&nova_kernel_tss) &&
+       nova_gdt_valid(&nova_kernel_gdt,&nova_kernel_tss)){
+        nova_gdtr_build(&nova_kernel_gdtr,&nova_kernel_gdt);
+        if(nova_kernel_gdtr.limit==sizeof(nova_kernel_gdt)-1u &&
+           nova_kernel_gdtr.base==(uint64_t)(uintptr_t)&nova_kernel_gdt)
+            serial_log("NOVA_GDT_TSS_CANDIDATE_READY_NOT_LOADED\\n");
+        else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\\n");
+    }else serial_log("NOVA_GDT_TSS_CANDIDATE_INVALID\\n");
     char boot_clock[20];
     if(nova_clock_string(boot_clock))serial_log("NOVA_RTC_READY\n");
     else serial_log("NOVA_RTC_UNAVAILABLE\n");
