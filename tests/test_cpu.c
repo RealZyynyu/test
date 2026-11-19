@@ -6,6 +6,11 @@
 
 int main(void) {
     uint32_t a, b, c, d;
+    /* A second scan must clear stale feature flags and vendor bytes. */
+    nova_cpu=(struct nova_cpu_info){
+        .long_mode=true,.sse2=true,.apic=true,.xsave=true,.hypervisor=true,
+        .vmx=true,.svm=true,.max_basic_leaf=UINT32_MAX
+    };
     assert(nova_cpu_detect());
     assert(nova_cpu.vendor[0] != '\0');
     assert(nova_cpu.vendor[12] == '\0');
