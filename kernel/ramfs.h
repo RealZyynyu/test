@@ -92,7 +92,16 @@ static bool nova_ramfs_self_test(void){
     struct nova_file *f=nova_file_find(temp);
     if(!f||f->size!=4||!nova_file_equal(f->data,"PASS"))return false;
     if(nova_file_delete("NOTES.TXT"))return false;
+    char payload[NOVA_FILE_DATA_CAP];
+    for(size_t i=0;i<NOVA_FILE_DATA_CAP-1;i++)payload[i]='X';
+    payload[NOVA_FILE_DATA_CAP-1]=0;
+    if(!nova_file_write(temp,payload,NOVA_FILE_DATA_CAP-1)||
+       f->size!=NOVA_FILE_DATA_CAP-1||
+       f->data[NOVA_FILE_DATA_CAP-2]!='X')return false;
     if(!nova_file_delete(temp)||nova_file_find(temp))return false;
+    if(f->used||f->size!=0||f->name[0]!=0)return false;
+    for(size_t i=0;i<NOVA_FILE_DATA_CAP;i++)
+        if(f->data[i]!=0)return false;
     return nova_file_count()==before;
 }
 #endif
