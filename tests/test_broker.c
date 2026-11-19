@@ -149,6 +149,19 @@ int main(void){
     req.operation=NOVA_BROKER_SAVE_READ;req.length=4;
     expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
     assert(!memcmp(out.bytes,"ONE!",4));
+    /* Replacing a longer save with a shorter one must clear the old tail. */
+    req.operation=NOVA_BROKER_SAVE_WRITE;req.length=2;
+    memcpy(req.bytes,"OK",2);
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(saves.slots[0].size==2&&saves.slots[0].data[0]=='O'&&
+           saves.slots[0].data[1]=='K');
+    for(size_t i=2;i<NOVA_SAVE_CAPACITY;i++)assert(saves.slots[0].data[i]==0);
+    req.operation=NOVA_BROKER_SAVE_WRITE;req.length=4;
+    memcpy(req.bytes,"ONE!",4);
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    req.operation=NOVA_BROKER_SAVE_READ;req.length=4;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(!memcmp(out.bytes,"ONE!",4));
     expect(&ctx,77,&req,&out,NOVA_BROKER_DENIED);
     assert(nova_cap_grant_trusted(&rights,&processes,77,NOVA_CAP_APP_SAVE));
     expect(&ctx,77,&req,&out,NOVA_BROKER_IO_ERROR); /* no save for 77 */
