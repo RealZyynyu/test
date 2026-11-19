@@ -162,6 +162,20 @@ int main(void){
     req.operation=NOVA_BROKER_SAVE_READ;req.length=4;
     expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
     assert(!memcmp(out.bytes,"ONE!",4));
+    /* An empty save is valid and must clear the previous complete payload. */
+    req.operation=NOVA_BROKER_SAVE_WRITE;req.length=0;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(saves.slots[0].present&&saves.slots[0].size==0);
+    for(size_t i=0;i<NOVA_SAVE_CAPACITY;i++)assert(saves.slots[0].data[i]==0);
+    req.operation=NOVA_BROKER_SAVE_INFO;req.length=0;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(out.file_size==0);
+    req.operation=NOVA_BROKER_SAVE_WRITE;req.length=4;
+    memcpy(req.bytes,"ONE!",4);
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    req.operation=NOVA_BROKER_SAVE_READ;req.length=4;
+    expect(&ctx,42,&req,&out,NOVA_BROKER_OK);
+    assert(!memcmp(out.bytes,"ONE!",4));
     expect(&ctx,77,&req,&out,NOVA_BROKER_DENIED);
     assert(nova_cap_grant_trusted(&rights,&processes,77,NOVA_CAP_APP_SAVE));
     expect(&ctx,77,&req,&out,NOVA_BROKER_IO_ERROR); /* no save for 77 */
