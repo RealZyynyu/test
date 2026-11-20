@@ -72,6 +72,20 @@ class TestNativeSafetyDefaults(unittest.TestCase):
             r"(?:wrmsr|ltr)\s*[;\n])"
         )
 
+    def test_candidate_gdt_and_tss_remain_unloaded(self):
+        # NOVA only builds a candidate GDT/TSS. The bootloader's active table
+        # must remain untouched until a separately audited transition path
+        # and mapped exception stacks are ready.
+        sources = []
+        for path in (ROOT / "kernel").iterdir():
+            if path.is_file() and path.suffix in {".c", ".h", ".S"}:
+                sources.append(path.read_text(encoding="utf-8"))
+        self.assertNotRegex(
+            "\\n".join(sources),
+            r'(?im)(?:^|")\\s*(?:lgdt|ltr)\\b',
+            "GDT/TSS activation must stay disabled during development",
+        )
+
     def test_interrupt_assembly_stays_kernel_only(self):
         assembly = self.text("kernel/irq.S")
         # Until a separately reviewed privilege-transition path exists, the
