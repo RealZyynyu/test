@@ -81,8 +81,8 @@ class TestNativeSafetyDefaults(unittest.TestCase):
             if path.is_file() and path.suffix in {".c", ".h", ".S"}:
                 sources.append(path.read_text(encoding="utf-8"))
         self.assertNotRegex(
-            "\\n".join(sources),
-            r'(?im)(?:^|")\\s*(?:lgdt|ltr)\\b',
+            "\n".join(sources),
+            r'(?im)(?:^|")\s*(?:lgdt|ltr)\b',
             "GDT/TSS activation must stay disabled during development",
         )
 
