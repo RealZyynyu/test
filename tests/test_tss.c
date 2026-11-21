@@ -15,6 +15,16 @@ int main(void){
     assert(nova_tss_valid(&tss));
     assert(!nova_tss_valid(NULL));
 
+    /* Four-level paging accepts canonical low/high addresses, but not
+       aligned addresses in either noncanonical gap. */
+    assert(nova_tss_stack_top_valid(UINT64_C(0x00007FFFFFFFFFF0)));
+    assert(nova_tss_stack_top_valid(UINT64_C(0xFFFF800000001000)));
+    assert(!nova_tss_stack_top_valid(UINT64_C(0x0000800000001000)));
+    assert(!nova_tss_stack_top_valid(UINT64_C(0xFFFF000000001000)));
+    struct nova_tss64 high_stack=tss;
+    assert(nova_tss_set_ist(&high_stack,1u,UINT64_C(0xFFFF800000001000)));
+    assert(nova_tss_valid(&high_stack));
+
     /* IST values may be configured while the TSS remains deny-all-I/O. */
 
     /* IST entries are configurable data only; no IDT gate or TR is loaded. */
@@ -47,6 +57,10 @@ int main(void){
     assert(!nova_tss_valid(&invalid));
     invalid=tss; invalid.iomap_base=0u;
     assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.rsp0=UINT64_C(0x0000800000001000);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.ist1=UINT64_C(0xFFFF000000001000);
+    assert(!nova_tss_valid(&invalid));
 
     /* Nonzero privilege-transition and IST stack tops must be aligned. */
     invalid=tss; invalid.rsp0=UINT64_C(0x1001);
@@ -73,6 +87,8 @@ int main(void){
     assert(!nova_tss_set_ist(&tss,8u,UINT64_C(0x1000)));
     assert(!nova_tss_set_ist(&tss,2u,0u));
     assert(!nova_tss_set_ist(&tss,2u,UINT64_C(0x1001)));
+    assert(!nova_tss_set_ist(&tss,2u,UINT64_C(0x0000800000001000)));
+    assert(!nova_tss_set_ist(&tss,2u,UINT64_C(0xFFFF000000001000)));
     assert(memcmp(&tss,&before_invalid,sizeof(tss))==0);
 
     struct nova_tss_descriptor d;

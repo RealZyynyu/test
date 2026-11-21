@@ -39,14 +39,26 @@ static inline bool nova_tss_init(struct nova_tss64 *tss){
     return true;
 }
 
-/* Configure one-based IST slot 1..7 with a nonzero, 16-byte-aligned
- * stack top. The caller remains responsible for mapping and reserving the
- * stack before this value is ever used by a live IDT gate.
+/* The native page-table design currently uses four paging levels,
+ * so every live stack top must be a canonical 48-bit linear address.
+ * Zero remains valid only as an unused RSP/IST field.
+ */
+static inline bool nova_tss_stack_top_valid(uint64_t stack_top){
+    if(stack_top==0u)return true;
+    const uint64_t upper=stack_top>>48;
+    const bool sign=(stack_top&(UINT64_C(1)<<47))!=0;
+    return (stack_top&15u)==0u &&
+           (sign?upper==UINT64_C(0xFFFF):upper==0u);
+}
+
+/* Configure one-based IST slot 1..7 with a nonzero, canonical,
+ * 16-byte-aligned stack top. The caller remains responsible for mapping and
+ * reserving the stack before this value is used by a live IDT gate.
  */
 static inline bool nova_tss_set_ist(struct nova_tss64 *tss,
                                     unsigned slot,uint64_t stack_top){
     if(!tss || slot<1u || slot>7u || !stack_top ||
-       (stack_top&15u)!=0)return false;
+       !nova_tss_stack_top_valid(stack_top))return false;
     switch(slot){
         case 1:tss->ist1=stack_top;break;
         case 2:tss->ist2=stack_top;break;
@@ -64,9 +76,6 @@ static inline bool nova_tss_set_ist(struct nova_tss64 *tss,
  * is intentionally absent: iomap_base must remain one byte beyond the
  * 104-byte TSS limit, and all architecturally reserved fields stay zero.
  */
-static inline bool nova_tss_stack_top_valid(uint64_t stack_top){
-    return stack_top==0u || (stack_top&15u)==0u;
-}
 static inline bool nova_tss_valid(const struct nova_tss64 *tss){
     return tss && tss->reserved0==0u && tss->reserved1==0u &&
            tss->reserved2==0u && tss->reserved3==0u &&
