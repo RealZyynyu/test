@@ -25,6 +25,12 @@ int main(void){
     assert(nova_tss_set_ist(&high_stack,1u,UINT64_C(0xFFFF800000001000)));
     assert(nova_tss_valid(&high_stack));
 
+    /* RSP1/RSP2 are also hardware-loaded stack tops when their CPLs are used. */
+    struct nova_tss64 privilege_stacks=tss;
+    privilege_stacks.rsp1=UINT64_C(0x00007FFFFFFFFFF0);
+    privilege_stacks.rsp2=UINT64_C(0xFFFF800000001000);
+    assert(nova_tss_valid(&privilege_stacks));
+
     /* IST values may be configured while the TSS remains deny-all-I/O. */
 
     /* IST entries are configurable data only; no IDT gate or TR is loaded. */
@@ -59,11 +65,19 @@ int main(void){
     assert(!nova_tss_valid(&invalid));
     invalid=tss; invalid.rsp0=UINT64_C(0x0000800000001000);
     assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.rsp1=UINT64_C(0x0000800000001000);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.rsp2=UINT64_C(0xFFFF000000001000);
+    assert(!nova_tss_valid(&invalid));
     invalid=tss; invalid.ist1=UINT64_C(0xFFFF000000001000);
     assert(!nova_tss_valid(&invalid));
 
     /* Nonzero privilege-transition and IST stack tops must be aligned. */
     invalid=tss; invalid.rsp0=UINT64_C(0x1001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.rsp1=UINT64_C(0x1001);
+    assert(!nova_tss_valid(&invalid));
+    invalid=tss; invalid.rsp2=UINT64_C(0x2001);
     assert(!nova_tss_valid(&invalid));
     invalid=tss; invalid.ist1=UINT64_C(0x2001);
     assert(!nova_tss_valid(&invalid));

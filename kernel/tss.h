@@ -81,6 +81,8 @@ static inline bool nova_tss_valid(const struct nova_tss64 *tss){
            tss->reserved2==0u && tss->reserved3==0u &&
            tss->iomap_base==sizeof(*tss) &&
            nova_tss_stack_top_valid(tss->rsp0) &&
+           nova_tss_stack_top_valid(tss->rsp1) &&
+           nova_tss_stack_top_valid(tss->rsp2) &&
            nova_tss_stack_top_valid(tss->ist1) &&
            nova_tss_stack_top_valid(tss->ist2) &&
            nova_tss_stack_top_valid(tss->ist3) &&
