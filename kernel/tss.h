@@ -43,12 +43,16 @@ static inline bool nova_tss_init(struct nova_tss64 *tss){
  * so every live stack top must be a canonical 48-bit linear address.
  * Zero remains valid only as an unused RSP/IST field.
  */
+/* Four-level paging uses 48-bit canonical linear addresses. */
+static inline bool nova_tss_linear_address_canonical(uint64_t address){
+    const uint64_t upper=address>>48;
+    const bool sign=(address&(UINT64_C(1)<<47))!=0;
+    return sign?upper==UINT64_C(0xFFFF):upper==0u;
+}
 static inline bool nova_tss_stack_top_valid(uint64_t stack_top){
     if(stack_top==0u)return true;
-    const uint64_t upper=stack_top>>48;
-    const bool sign=(stack_top&(UINT64_C(1)<<47))!=0;
     return (stack_top&15u)==0u &&
-           (sign?upper==UINT64_C(0xFFFF):upper==0u);
+           nova_tss_linear_address_canonical(stack_top);
 }
 
 /* Configure one-based IST slot 1..7 with a nonzero, canonical,
@@ -120,7 +124,8 @@ static inline bool nova_tss_descriptor_build(struct nova_tss_descriptor *out,
     /* A null base cannot identify a live TSS. Build into a temporary so
      * rejected inputs never leave a partially overwritten descriptor.
      */
-    if(!out||!base||limit>0xFFFFFu)return false;
+    if(!out||!base||limit>0xFFFFFu||
+       !nova_tss_linear_address_canonical((uint64_t)base))return false;
     uint64_t address=(uint64_t)base;
     struct nova_tss_descriptor candidate={0};
     candidate.limit_low=(uint16_t)limit;

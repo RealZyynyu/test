@@ -113,8 +113,19 @@ int main(void){
     assert(nova_tss_descriptor_limit(&d)==sizeof(tss)-1u);
     assert(d.reserved==0u);
 
-    assert(!nova_tss_descriptor_build(NULL,base,103u));
+    /* A TSS base is canonical but need not have stack-pointer alignment. */
+    uintptr_t upper_base=(uintptr_t)UINT64_C(0xFFFF800000001234);
+    assert(nova_tss_descriptor_build(&d,upper_base,sizeof(tss)-1u));
+    assert(nova_tss_descriptor_base(&d)==(uint64_t)upper_base);
     struct nova_tss_descriptor unchanged=d;
+    assert(!nova_tss_descriptor_build(&d,
+        (uintptr_t)UINT64_C(0x0000800000001000),103u));
+    assert(memcmp(&d,&unchanged,sizeof(d))==0);
+    assert(!nova_tss_descriptor_build(&d,
+        (uintptr_t)UINT64_C(0xFFFF000000001000),103u));
+    assert(memcmp(&d,&unchanged,sizeof(d))==0);
+
+    assert(!nova_tss_descriptor_build(NULL,base,103u));
     assert(!nova_tss_descriptor_build(&d,0u,103u));
     assert(memcmp(&d,&unchanged,sizeof(d))==0);
     assert(!nova_tss_descriptor_build(&d,base,0x100000u));
