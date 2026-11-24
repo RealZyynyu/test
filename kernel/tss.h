@@ -49,6 +49,18 @@ static inline bool nova_tss_linear_address_canonical(uint64_t address){
     const bool sign=(address&(UINT64_C(1)<<47))!=0;
     return sign?upper==UINT64_C(0xFFFF):upper==0u;
 }
+/* Validate every byte of an inclusive hardware descriptor range. Checking
+ * only its base is insufficient: the range must not enter the noncanonical
+ * gap or wrap past the end of the 64-bit linear-address space.
+ */
+static inline bool nova_tss_linear_range_canonical(uint64_t base,
+                                                    uint64_t length){
+    if(length==0u || !nova_tss_linear_address_canonical(base) ||
+       base>UINT64_MAX-(length-1u))return false;
+    const uint64_t last=base+length-1u;
+    return nova_tss_linear_address_canonical(last) &&
+           ((base^last)&(UINT64_C(1)<<47))==0u;
+}
 static inline bool nova_tss_stack_top_valid(uint64_t stack_top){
     if(stack_top==0u)return true;
     return (stack_top&15u)==0u &&
@@ -125,7 +137,8 @@ static inline bool nova_tss_descriptor_build(struct nova_tss_descriptor *out,
      * rejected inputs never leave a partially overwritten descriptor.
      */
     if(!out||!base||limit>0xFFFFFu||
-       !nova_tss_linear_address_canonical((uint64_t)base))return false;
+       !nova_tss_linear_range_canonical((uint64_t)base,
+                                        (uint64_t)limit+1u))return false;
     uint64_t address=(uint64_t)base;
     struct nova_tss_descriptor candidate={0};
     candidate.limit_low=(uint16_t)limit;

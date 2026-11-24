@@ -118,6 +118,26 @@ int main(void){
     assert(nova_tss_descriptor_build(&d,upper_base,sizeof(tss)-1u));
     assert(nova_tss_descriptor_base(&d)==(uint64_t)upper_base);
     struct nova_tss_descriptor unchanged=d;
+
+    /* The complete inclusive TSS range must remain canonical. */
+    const uint64_t low_edge=UINT64_C(0x00007FFFFFFFFF98);
+    const uint64_t high_edge=UINT64_MAX-UINT64_C(103);
+    assert(nova_tss_linear_range_canonical(low_edge,104u));
+    assert(!nova_tss_linear_range_canonical(low_edge,105u));
+    assert(nova_tss_linear_range_canonical(high_edge,104u));
+    assert(!nova_tss_linear_range_canonical(high_edge,105u));
+    assert(!nova_tss_linear_range_canonical(low_edge,0u));
+
+    assert(nova_tss_descriptor_build(&d,(uintptr_t)low_edge,103u));
+    assert(nova_tss_descriptor_base(&d)==low_edge);
+    unchanged=d;
+    assert(!nova_tss_descriptor_build(&d,(uintptr_t)low_edge,104u));
+    assert(memcmp(&d,&unchanged,sizeof(d))==0);
+    assert(nova_tss_descriptor_build(&d,(uintptr_t)high_edge,103u));
+    assert(nova_tss_descriptor_base(&d)==high_edge);
+    unchanged=d;
+    assert(!nova_tss_descriptor_build(&d,(uintptr_t)high_edge,104u));
+    assert(memcmp(&d,&unchanged,sizeof(d))==0);
     assert(!nova_tss_descriptor_build(&d,
         (uintptr_t)UINT64_C(0x0000800000001000),103u));
     assert(memcmp(&d,&unchanged,sizeof(d))==0);
