@@ -63,6 +63,29 @@ int main(void){
     assert(idt.offset_32_63==(uint32_t)((uint64_t)handler>>32));
     assert(idt.reserved==0u);
     saved=idt;
+
+    /* Handler entry points must be canonical under NOVA's four-level paging. */
+    const uintptr_t low_edge=(uintptr_t)UINT64_C(0x00007FFFFFFFFFFF);
+    const uintptr_t high_edge=(uintptr_t)UINT64_C(0xFFFF800000000000);
+    assert(nova_idt_entry_build(&idt,low_edge,0x08u,0u,0x8Eu));
+    assert(nova_idt_entry_valid(&idt));
+    assert(nova_idt_entry_build(&idt,high_edge,0x08u,0u,0x8Eu));
+    assert(nova_idt_entry_valid(&idt));
+    idt=saved;
+    const uintptr_t noncanonical_low=(uintptr_t)UINT64_C(0x0000800000000000);
+    const uintptr_t noncanonical_high=(uintptr_t)UINT64_C(0xFFFF7FFFFFFFFFFF);
+    assert(!nova_idt_entry_build(&idt,noncanonical_low,0x08u,0u,0x8Eu));
+    assert(memcmp(&idt,&saved,sizeof(idt))==0);
+    assert(!nova_idt_entry_build(&idt,noncanonical_high,0x08u,0u,0x8Eu));
+    assert(memcmp(&idt,&saved,sizeof(idt))==0);
+
+    /* Validation also rejects a corrupted gate even if its fields look valid. */
+    struct nova_idt_entry malformed=saved;
+    malformed.offset_0_15=(uint16_t)noncanonical_low;
+    malformed.offset_16_31=(uint16_t)(noncanonical_low>>16);
+    malformed.offset_32_63=(uint32_t)((uint64_t)noncanonical_low>>32);
+    assert(!nova_idt_entry_valid(&malformed));
+
     assert(!nova_idt_entry_build(NULL,handler,0x08u,0u,0x8Eu));
     assert(!nova_idt_entry_build(&idt,0u,0x08u,0u,0x8Eu));
     assert(!nova_idt_entry_build(&idt,handler,0u,0u,0x8Eu));

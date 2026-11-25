@@ -38,7 +38,9 @@ static inline bool nova_idt_entry_valid(const struct nova_idt_entry *entry){
     uint64_t address=(uint64_t)entry->offset_0_15|
         ((uint64_t)entry->offset_16_31<<16)|
         ((uint64_t)entry->offset_32_63<<32);
-    return address!=0u;
+    const uint64_t upper=address>>48;
+    const bool sign=(address&(UINT64_C(1)<<47))!=0;
+    return address!=0u && (sign?upper==UINT64_C(0xFFFF):upper==0u);
 }
 
 /* Build a present 64-bit interrupt (0xE) or trap (0xF) gate.
