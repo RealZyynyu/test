@@ -72,6 +72,17 @@ static inline void nova_gdtr_build(struct nova_gdtr *gdtr,
     gdtr->limit=(uint16_t)(sizeof(*g)-1u);
     gdtr->base=(uint64_t)(uintptr_t)g;
 }
+/* Validate a candidate GDTR without executing LGDT. The limit must describe
+ * the complete candidate table, and every byte in its inclusive range must
+ * remain a canonical 48-bit linear address.
+ */
+static inline bool nova_gdtr_valid(const struct nova_gdtr *gdtr,
+                                   const struct nova_gdt *g){
+    if(!gdtr||!g||gdtr->limit!=(uint16_t)(sizeof(*g)-1u)||
+       gdtr->base!=(uint64_t)(uintptr_t)g)return false;
+    return nova_tss_linear_range_canonical(
+        gdtr->base,(uint64_t)gdtr->limit+1u);
+}
 static inline bool nova_gdt_valid(const struct nova_gdt *g,
                                   const struct nova_tss64 *tss){
     if(!g||!nova_tss_valid(tss)||g->entries[0]!=0||
