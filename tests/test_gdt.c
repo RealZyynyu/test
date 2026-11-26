@@ -37,6 +37,25 @@ int main(void){
     nova_gdtr_build(&gdtr,&g);
     assert(gdtr.limit==sizeof(g)-1u);
     assert(gdtr.base==(uint64_t)(uintptr_t)&g);
+    assert(nova_gdtr_valid(&gdtr,&g));
+    assert(!nova_gdtr_valid(NULL,&g));
+    assert(!nova_gdtr_valid(&gdtr,NULL));
+    struct nova_gdtr invalid_gdtr=gdtr;
+    invalid_gdtr.limit--;
+    assert(!nova_gdtr_valid(&invalid_gdtr,&g));
+    invalid_gdtr=gdtr;
+    invalid_gdtr.base++;
+    assert(!nova_gdtr_valid(&invalid_gdtr,&g));
+
+    /* A 56-byte table must fit entirely in one canonical address region. */
+    assert(nova_tss_linear_range_canonical(
+        UINT64_C(0x00007FFFFFFFFFC8),sizeof(g)));
+    assert(nova_tss_linear_range_canonical(
+        UINT64_C(0xFFFF800000000000),sizeof(g)));
+    assert(!nova_tss_linear_range_canonical(
+        UINT64_C(0x00007FFFFFFFFFE0),sizeof(g)));
+    assert(!nova_tss_linear_range_canonical(
+        UINT64_C(0xFFFFFFFFFFFFFFF0),sizeof(g)));
     assert(nova_gdt_valid(&g,&tss));
     /* All four high-nibble flag bits are reserved for a 64-bit TSS. */
     for(uint8_t reserved=0x10u;reserved;
