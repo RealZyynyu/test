@@ -21,6 +21,21 @@ struct nova_idt_entry {
 _Static_assert(sizeof(struct nova_idt_entry)==16u,
                "x86-64 IDT gate must be 16 bytes");
 
+_Static_assert(offsetof(struct nova_idt_entry,offset_0_15)==0u,
+               "IDT offset_0_15 layout mismatch");
+_Static_assert(offsetof(struct nova_idt_entry,segment)==2u,
+               "IDT segment selector layout mismatch");
+_Static_assert(offsetof(struct nova_idt_entry,ist)==4u,
+               "IDT IST field layout mismatch");
+_Static_assert(offsetof(struct nova_idt_entry,flags)==5u,
+               "IDT gate flags layout mismatch");
+_Static_assert(offsetof(struct nova_idt_entry,offset_16_31)==6u,
+               "IDT offset_16_31 layout mismatch");
+_Static_assert(offsetof(struct nova_idt_entry,offset_32_63)==8u,
+               "IDT offset_32_63 layout mismatch");
+_Static_assert(offsetof(struct nova_idt_entry,reserved)==12u,
+               "IDT reserved field layout mismatch");
+
 static inline bool nova_idt_gate_flags_valid(uint8_t flags){
     uint8_t type=(uint8_t)(flags&0x0Fu);
     /* Kernel IDT gates stay DPL 0; user-callable software gates are
